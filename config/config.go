@@ -11,6 +11,7 @@ import (
 type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	MySQL     MySQLConfig     `mapstructure:"mysql"`
+	Redis     RedisConfig     `mapstructure:"redis"`
 	JWT       JWTConfig       `mapstructure:"jwt"`
 	Snowflake SnowflakeConfig `mapstructure:"snowflake"`
 	Storage   StorageConfig   `mapstructure:"storage"`
@@ -70,6 +71,17 @@ type StorageConfig struct {
 type LogConfig struct {
 	Level    string `mapstructure:"level"`
 	Encoding string `mapstructure:"encoding"`
+}
+
+type RedisConfig struct {
+	Host         string        `mapstructure:"host"`
+	Port         int           `mapstructure:"port"`
+	Password     string        `mapstructure:"password"`
+	DB           int           `mapstructure:"db"`
+	PoolSize     int           `mapstructure:"pool_size"`
+	DialTimeout  time.Duration `mapstructure:"dial_timeout"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout"`
 }
 
 // Load 从 path（文件夹或具体路径）加载配置；同时支持 XFS_ 前缀环境变量覆盖。

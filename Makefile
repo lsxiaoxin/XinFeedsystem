@@ -1,4 +1,4 @@
-.PHONY: run build swag up down tidy clean
+.PHONY: run build swag up down tidy clean redis-cli
 
 APP := xinfeedsystem
 
@@ -33,6 +33,10 @@ test:
 ## lint: 静态检查
 lint:
 	golangci-lint run ./...
+
+## redis-cli: 进入 Redis 容器交互式命令行
+redis-cli:
+	docker exec -it xfs-redis redis-cli
 
 ## clean: 清理编译产物
 clean:

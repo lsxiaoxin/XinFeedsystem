@@ -37,3 +37,13 @@ storage:
 log:
   level: "debug"      # debug | info | warn | error
   encoding: "console" # console | json
+
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 50
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s

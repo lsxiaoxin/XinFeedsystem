@@ -22,6 +22,7 @@ import (
 	"xinfeedsystem/internal/service"
 	"xinfeedsystem/pkg/jwt"
 	"xinfeedsystem/pkg/logger"
+	"xinfeedsystem/pkg/redisclient"
 	"xinfeedsystem/pkg/snowflake"
 )
 
@@ -48,6 +49,16 @@ func main() {
 	if err != nil {
 		logger.Fatal("init db", zap.Error(err))
 	}
+
+	rdb, err := redisclient.New(cfg.Redis)
+	if err != nil {
+		logger.Fatal("init redis", zap.Error(err))
+	}
+	defer rdb.Close()
+	logger.Info("redis connected", zap.String("addr", fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port)))
+
+	// 占位：后续阶段在此处注入 rdb 到 service 层
+	_ = rdb
 
 	// 依赖注入：repository → service → handler
 	userRepo    := repository.NewUserRepository(db)
