@@ -50,24 +50,27 @@ func main() {
 	}
 
 	// 依赖注入：repository → service → handler
-	userRepo  := repository.NewUserRepository(db)
-	videoRepo := repository.NewVideoRepository(db)
-	likeRepo  := repository.NewLikeRepository(db)
+	userRepo    := repository.NewUserRepository(db)
+	videoRepo   := repository.NewVideoRepository(db)
+	likeRepo    := repository.NewLikeRepository(db)
+	commentRepo := repository.NewCommentRepository(db)
 
-	userSvc  := service.NewUserService(userRepo)
-	videoSvc := service.NewVideoService(videoRepo, cfg.Storage)
-	likeSvc  := service.NewLikeService(likeRepo)
-	feedSvc  := service.NewFeedService(
+	userSvc    := service.NewUserService(userRepo)
+	videoSvc   := service.NewVideoService(videoRepo, cfg.Storage)
+	likeSvc    := service.NewLikeService(likeRepo)
+	commentSvc := service.NewCommentService(commentRepo, userRepo)
+	feedSvc    := service.NewFeedService(
 		service.NewLatestFetcher(videoRepo),
 		// 后续在此追加新 fetcher，如 service.NewLikeCountFetcher(videoRepo)
 	)
 
 	storageBase := cfg.Storage.BaseDir
 	r := router.New(&router.Handlers{
-		User:  api.NewUserHandler(userSvc),
-		Video: api.NewVideoHandler(videoSvc),
-		Feed:  api.NewFeedHandler(feedSvc),
-		Like:  api.NewLikeHandler(likeSvc),
+		User:    api.NewUserHandler(userSvc),
+		Video:   api.NewVideoHandler(videoSvc),
+		Feed:    api.NewFeedHandler(feedSvc),
+		Like:    api.NewLikeHandler(likeSvc),
+		Comment: api.NewCommentHandler(commentSvc),
 	}, storageBase)
 
 	srv := &http.Server{

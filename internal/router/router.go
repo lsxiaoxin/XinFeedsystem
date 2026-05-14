@@ -10,10 +10,11 @@ import (
 
 // Handlers 聚合所有 handler，随业务增长追加字段即可。
 type Handlers struct {
-	User  *api.UserHandler
-	Video *api.VideoHandler
-	Feed  *api.FeedHandler
-	Like  *api.LikeHandler
+	User    *api.UserHandler
+	Video   *api.VideoHandler
+	Feed    *api.FeedHandler
+	Like    *api.LikeHandler
+	Comment *api.CommentHandler
 }
 
 func New(h *Handlers, staticDir string) *gin.Engine {
@@ -45,6 +46,9 @@ func New(h *Handlers, staticDir string) *gin.Engine {
 
 		// Feed（公开可见）
 		public.GET("/feed", h.Feed.GetFeed)
+
+		// 评论列表（公开可见）
+		public.GET("/comment/list", h.Comment.List)
 	}
 
 	// ── 需要鉴权 ──────────────────────────────────
@@ -59,6 +63,9 @@ func New(h *Handlers, staticDir string) *gin.Engine {
 		// 点赞
 		auth.POST("/like/action", h.Like.Action)
 		auth.GET("/like/list", h.Like.List)
+
+		// 评论（发/删需鉴权，列表公开）
+		auth.POST("/comment/action", h.Comment.Action)
 	}
 
 	return r
