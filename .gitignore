@@ -1,0 +1,29 @@
+# 编译产物
+bin/
+tmp/
+
+# 本地视频文件
+storage/videos/*
+storage/covers/*
+!storage/videos/.gitkeep
+!storage/covers/.gitkeep
+
+# 日志
+*.log
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+vendor/
+
+# Swagger 生成文件（可从代码重新生成）
+docs/swagger.*
+docs/docs.go
