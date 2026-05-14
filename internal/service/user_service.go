@@ -2,11 +2,15 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"github.com/redis/go-redis/v9"
 	"xinfeedsystem/internal/errcode"
 	"xinfeedsystem/internal/model/dto"
 	"xinfeedsystem/internal/model/entity"
 	"xinfeedsystem/internal/repository"
+	"xinfeedsystem/pkg/cache"
 	"xinfeedsystem/pkg/hash"
 	pkgjwt "xinfeedsystem/pkg/jwt"
 	"xinfeedsystem/pkg/snowflake"
@@ -14,11 +18,14 @@ import (
 
 type UserService struct {
 	userRepo *repository.UserRepository
+	rdb      *redis.Client
 }
 
-func NewUserService(userRepo *repository.UserRepository) *UserService {
-	return &UserService{userRepo: userRepo}
+func NewUserService(userRepo *repository.UserRepository, rdb *redis.Client) *UserService {
+	return &UserService{userRepo: userRepo, rdb: rdb}
 }
+
+func userInfoKey(id int64) string { return fmt.Sprintf("user:info:%d", id) }
 
 func (s *UserService) Register(ctx context.Context, req *dto.RegisterRequest) error {
 	existing, err := s.userRepo.FindByUsername(ctx, req.Username)
@@ -70,12 +77,25 @@ func (s *UserService) Logout(ctx context.Context, userID int64) error {
 }
 
 func (s *UserService) GetUserInfo(ctx context.Context, id int64) (*entity.User, error) {
+	key := userInfoKey(id)
+
+	var u entity.User
+	hit, isNil, err := cache.GetJSON(ctx, s.rdb, key, &u)
+	if err == nil && hit {
+		if isNil {
+			return nil, errcode.New(errcode.UserNotFound)
+		}
+		return &u, nil
+	}
+
 	user, err := s.userRepo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if user == nil {
+		_ = cache.SetNil(ctx, s.rdb, key, 30*time.Second)
 		return nil, errcode.New(errcode.UserNotFound)
 	}
+	_ = cache.SetJSON(ctx, s.rdb, key, user, cache.RandomizedTTL(10*time.Minute, 30*time.Second))
 	return user, nil
 }

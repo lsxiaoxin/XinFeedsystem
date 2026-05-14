@@ -64,11 +64,11 @@ func main() {
 	commentRepo := repository.NewCommentRepository(db)
 	followRepo  := repository.NewFollowRepository(db)
 
-	userSvc    := service.NewUserService(userRepo)
+	userSvc    := service.NewUserService(userRepo, rdb)
 	videoSvc   := service.NewVideoService(videoRepo, cfg.Storage, rdb)
 	likeSvc    := service.NewLikeService(likeRepo, rdb)
 	commentSvc := service.NewCommentService(commentRepo, userRepo, rdb)
-	followSvc  := service.NewFollowService(followRepo, userRepo)
+	followSvc  := service.NewFollowService(followRepo, userRepo, rdb)
 	feedSvc    := service.NewFeedService(
 		service.NewLatestFetcher(videoRepo),
 		service.NewFollowingFetcher(videoRepo),
