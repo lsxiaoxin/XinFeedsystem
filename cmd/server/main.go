@@ -65,6 +65,7 @@ func main() {
 		service.NewLatestFetcher(videoRepo),
 		service.NewFollowingFetcher(videoRepo),
 		service.NewPopularityFetcher(videoRepo),
+		service.NewLikeCountFetcher(videoRepo),
 	)
 
 	storageBase := cfg.Storage.BaseDir

@@ -24,7 +24,7 @@
 
 ```bash
 # 1. 启动 MySQL
-make up
+docker compose -f deploy/docker-compose.yaml up -d
 
 # 2. 启动服务（debug 模式自动 AutoMigrate 建表）
 make run

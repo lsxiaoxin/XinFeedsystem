@@ -67,8 +67,23 @@ func (r *VideoRepository) ListByHeat(ctx context.Context, cursorHeat, cursorID i
 		Order("heat DESC, id DESC").
 		Limit(limit)
 
-	if cursorHeat > 0 {
+	if cursorID > 0 {
 		q = q.Where("heat < ? OR (heat = ? AND id < ?)", cursorHeat, cursorHeat, cursorID)
+	}
+
+	var list []*entity.Video
+	return list, q.Find(&list).Error
+}
+
+// ListByLikeCount 按点赞数倒序游标分页，供 LikeCountFetcher 使用。
+func (r *VideoRepository) ListByLikeCount(ctx context.Context, cursorLikes, cursorID int64, limit int) ([]*entity.Video, error) {
+	q := r.db.WithContext(ctx).
+		Where("status = 1").
+		Order("like_count DESC, id DESC").
+		Limit(limit)
+
+	if cursorID > 0 {
+		q = q.Where("like_count < ? OR (like_count = ? AND id < ?)", cursorLikes, cursorLikes, cursorID)
 	}
 
 	var list []*entity.Video

@@ -78,6 +78,26 @@ func (f *FollowingFetcher) Fetch(ctx context.Context, score, cursorID int64, lim
 func (f *FollowingFetcher) ScoreOf(v *entity.Video) int64 { return v.CreatedAt }
 
 // ──────────────────────────────────────────────
+// LikeCountFetcher  按点赞数倒序
+// ──────────────────────────────────────────────
+
+type LikeCountFetcher struct {
+	videoRepo *repository.VideoRepository
+}
+
+func NewLikeCountFetcher(videoRepo *repository.VideoRepository) *LikeCountFetcher {
+	return &LikeCountFetcher{videoRepo: videoRepo}
+}
+
+func (f *LikeCountFetcher) Type() string { return "like_count" }
+
+func (f *LikeCountFetcher) Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error) {
+	return f.videoRepo.ListByLikeCount(ctx, score, cursorID, limit)
+}
+
+func (f *LikeCountFetcher) ScoreOf(v *entity.Video) int64 { return int64(v.LikeCount) }
+
+// ──────────────────────────────────────────────
 // PopularityFetcher  按热度（Heat）倒序
 // ──────────────────────────────────────────────
 
