@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"xinfeedsystem/internal/api"
 	"xinfeedsystem/internal/middleware"
+	"xinfeedsystem/internal/repository"
 )
 
 // Handlers 聚合所有 handler，随业务增长追加字段即可。
@@ -18,12 +19,11 @@ type Handlers struct {
 	Follow  *api.FollowHandler
 }
 
-func New(h *Handlers, staticDir string) *gin.Engine {
+func New(h *Handlers, userRepo *repository.UserRepository, staticDir string) *gin.Engine {
 	r := gin.New()
 	r.Use(middleware.Recovery())
 	r.Use(gin.Logger())
 
-	// 静态文件服务：视频/封面直链播放
 	r.Static("/static/videos", staticDir+"/videos")
 	r.Static("/static/covers", staticDir+"/covers")
 
@@ -36,39 +36,32 @@ func New(h *Handlers, staticDir string) *gin.Engine {
 	// ── 公开路由 ──────────────────────────────────
 	public := v1.Group("")
 	{
-		// 用户
 		public.POST("/user/register", h.User.Register)
 		public.POST("/user/login", h.User.Login)
 		public.GET("/user/:id", h.User.GetUserInfo)
 
-		// 视频（公开可见）
 		public.GET("/video/:id", h.Video.GetDetail)
 		public.GET("/video/list", h.Video.ListByAuthorID)
 
-		// Feed（公开可见，following 类型需要 token；OptionalAuth 软解析不阻断）
-		public.GET("/feed", middleware.OptionalAuth(), h.Feed.GetFeed)
+		// Feed（following 类型需 token；OptionalAuth 软解析不阻断）
+		public.GET("/feed", middleware.OptionalAuth(userRepo), h.Feed.GetFeed)
 
-		// 评论列表（公开可见）
 		public.GET("/comment/list", h.Comment.List)
 	}
 
 	// ── 需要鉴权 ──────────────────────────────────
-	auth := v1.Group("", middleware.JWTAuth())
+	auth := v1.Group("", middleware.JWTAuth(userRepo))
 	{
-		// 用户
 		auth.GET("/user/me", h.User.GetMe)
+		auth.POST("/user/logout", h.User.Logout)
 
-		// 视频
 		auth.POST("/video/publish", h.Video.Publish)
 
-		// 点赞
 		auth.POST("/like/action", h.Like.Action)
 		auth.GET("/like/list", h.Like.List)
 
-		// 评论（发/删需鉴权，列表公开）
 		auth.POST("/comment/action", h.Comment.Action)
 
-		// 关注（关注/取关需鉴权，列表公开）
 		auth.POST("/follow/action", h.Follow.Action)
 	}
 

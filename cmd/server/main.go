@@ -75,7 +75,7 @@ func main() {
 		Like:    api.NewLikeHandler(likeSvc),
 		Comment: api.NewCommentHandler(commentSvc),
 		Follow:  api.NewFollowHandler(followSvc),
-	}, storageBase)
+	}, userRepo, storageBase)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),

@@ -45,6 +45,30 @@ func (r *UserRepository) FindByIDs(ctx context.Context, ids []int64) (map[int64]
 	return m, nil
 }
 
+// SaveToken 登录时写入 token（覆盖旧值）。
+func (r *UserRepository) SaveToken(ctx context.Context, userID int64, token string) error {
+	return r.db.WithContext(ctx).Model(&entity.User{}).
+		Where("id = ?", userID).
+		UpdateColumn("token", token).Error
+}
+
+// ClearToken 登出时清空 token。
+func (r *UserRepository) ClearToken(ctx context.Context, userID int64) error {
+	return r.db.WithContext(ctx).Model(&entity.User{}).
+		Where("id = ?", userID).
+		UpdateColumn("token", "").Error
+}
+
+// FindTokenByUserID 查询用户当前存储的 token。
+func (r *UserRepository) FindTokenByUserID(ctx context.Context, userID int64) (string, error) {
+	var u entity.User
+	err := r.db.WithContext(ctx).Select("token").First(&u, userID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	return u.Token, err
+}
+
 func (r *UserRepository) FindByUsername(ctx context.Context, username string) (*entity.User, error) {
 	var user entity.User
 	err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error

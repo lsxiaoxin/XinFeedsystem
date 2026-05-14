@@ -59,7 +59,14 @@ func (s *UserService) Login(ctx context.Context, req *dto.LoginRequest) (string,
 	if err != nil {
 		return "", nil, err
 	}
+	if err := s.userRepo.SaveToken(ctx, user.ID, token); err != nil {
+		return "", nil, err
+	}
 	return token, user, nil
+}
+
+func (s *UserService) Logout(ctx context.Context, userID int64) error {
+	return s.userRepo.ClearToken(ctx, userID)
 }
 
 func (s *UserService) GetUserInfo(ctx context.Context, id int64) (*entity.User, error) {

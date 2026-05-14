@@ -9,6 +9,7 @@ type User struct {
 	Nickname      string         `gorm:"size:32;not null"               json:"nickname"`
 	Avatar        string         `gorm:"size:255"                       json:"avatar"`
 	Signature     string         `gorm:"size:140"                       json:"signature"`
+	Token         string         `gorm:"size:512;default:''"            json:"-"`
 	FollowCount   int            `gorm:"not null;default:0"             json:"follow_count"`
 	FollowerCount int            `gorm:"not null;default:0"             json:"follower_count"`
 	CreatedAt     int64          `gorm:"autoCreateTime:milli"           json:"created_at"`

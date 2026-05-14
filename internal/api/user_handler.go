@@ -86,6 +86,22 @@ func (h *UserHandler) GetUserInfo(c *gin.Context) {
 	response.OK(c, dto.ToUserVO(user))
 }
 
+// Logout godoc
+// @Summary      退出登录
+// @Tags         user
+// @Security     BearerAuth
+// @Produce      json
+// @Success      200 {object} response.Response
+// @Router       /api/v1/user/logout [post]
+func (h *UserHandler) Logout(c *gin.Context) {
+	uid := middleware.GetUserID(c)
+	if err := h.userSvc.Logout(c.Request.Context(), uid); err != nil {
+		handleSvcError(c, err)
+		return
+	}
+	response.OK(c, nil)
+}
+
 // GetMe godoc
 // @Summary      获取当前登录用户信息
 // @Tags         user
