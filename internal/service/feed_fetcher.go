@@ -72,3 +72,24 @@ func (f *FollowingFetcher) Fetch(ctx context.Context, score, cursorID int64, lim
 }
 
 func (f *FollowingFetcher) ScoreOf(v *entity.Video) int64 { return v.CreatedAt }
+
+// ──────────────────────────────────────────────
+// PopularityFetcher  按热度（Heat）倒序
+// ──────────────────────────────────────────────
+
+type PopularityFetcher struct {
+	videoRepo *repository.VideoRepository
+}
+
+func NewPopularityFetcher(videoRepo *repository.VideoRepository) *PopularityFetcher {
+	return &PopularityFetcher{videoRepo: videoRepo}
+}
+
+func (f *PopularityFetcher) Type() string { return "popularity" }
+
+func (f *PopularityFetcher) Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error) {
+	return f.videoRepo.ListByHeat(ctx, score, cursorID, limit)
+}
+
+// ScoreOf 热榜得分就是 heat 字段本身。
+func (f *PopularityFetcher) ScoreOf(v *entity.Video) int64 { return v.Heat }

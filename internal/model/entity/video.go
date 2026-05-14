@@ -12,6 +12,7 @@ type Video struct {
 	LikeCount    int            `gorm:"not null;default:0"             json:"like_count"`
 	CommentCount int            `gorm:"not null;default:0"             json:"comment_count"`
 	PlayCount    int64          `gorm:"not null;default:0"             json:"play_count"`
+	Heat         int64          `gorm:"not null;default:0;index"       json:"heat"`
 	Status       int8           `gorm:"not null;default:1"             json:"status"`
 	CreatedAt    int64          `gorm:"autoCreateTime:milli"           json:"created_at"`
 	UpdatedAt    int64          `gorm:"autoUpdateTime:milli"           json:"updated_at"`

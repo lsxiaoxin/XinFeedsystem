@@ -61,8 +61,12 @@ func (r *LikeRepository) Like(ctx context.Context, userID, videoID int64) error 
 			return err
 		}
 
+		if err := tx.Model(&entity.Video{}).Where("id = ?", videoID).
+			UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error; err != nil {
+			return err
+		}
 		return tx.Model(&entity.Video{}).Where("id = ?", videoID).
-			UpdateColumn("like_count", gorm.Expr("like_count + 1")).Error
+			UpdateColumn("heat", gorm.Expr("heat + 1")).Error
 	})
 }
 

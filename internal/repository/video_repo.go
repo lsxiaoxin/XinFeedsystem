@@ -60,6 +60,21 @@ func (r *VideoRepository) ListByFollowing(ctx context.Context, followerID, curso
 	return list, q.Find(&list).Error
 }
 
+// ListByHeat 按热度倒序游标分页，供 PopularityFetcher 使用。
+func (r *VideoRepository) ListByHeat(ctx context.Context, cursorHeat, cursorID int64, limit int) ([]*entity.Video, error) {
+	q := r.db.WithContext(ctx).
+		Where("status = 1").
+		Order("heat DESC, id DESC").
+		Limit(limit)
+
+	if cursorHeat > 0 {
+		q = q.Where("heat < ? OR (heat = ? AND id < ?)", cursorHeat, cursorHeat, cursorID)
+	}
+
+	var list []*entity.Video
+	return list, q.Find(&list).Error
+}
+
 // ListLatest 全站最新视频游标分页，供 LatestFeedFetcher 使用。
 func (r *VideoRepository) ListLatest(ctx context.Context, cursorTime, cursorID int64, limit int) ([]*entity.Video, error) {
 	q := r.db.WithContext(ctx).

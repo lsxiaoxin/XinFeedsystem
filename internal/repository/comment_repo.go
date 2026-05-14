@@ -16,14 +16,18 @@ func NewCommentRepository(db *gorm.DB) *CommentRepository {
 	return &CommentRepository{db: db}
 }
 
-// Create 在事务内插入评论并更新视频评论数。
+// Create 在事务内插入评论并更新视频评论数和热度。
 func (r *CommentRepository) Create(ctx context.Context, c *entity.Comment) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(c).Error; err != nil {
 			return err
 		}
+		if err := tx.Model(&entity.Video{}).Where("id = ?", c.VideoID).
+			UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error; err != nil {
+			return err
+		}
 		return tx.Model(&entity.Video{}).Where("id = ?", c.VideoID).
-			UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error
+			UpdateColumn("heat", gorm.Expr("heat + 1")).Error
 	})
 }
 

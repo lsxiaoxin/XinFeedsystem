@@ -29,6 +29,7 @@ type VideoVO struct {
 	LikeCount    int     `json:"like_count"`
 	CommentCount int     `json:"comment_count"`
 	PlayCount    int64   `json:"play_count"`
+	Heat         int64   `json:"heat"`
 	Author       *UserVO `json:"author,omitempty"`
 	CreatedAt    int64   `json:"created_at"`
 }
@@ -51,6 +52,7 @@ func ToVideoVO(v *entity.Video) *VideoVO {
 		LikeCount:    v.LikeCount,
 		CommentCount: v.CommentCount,
 		PlayCount:    v.PlayCount,
+		Heat:         v.Heat,
 		CreatedAt:    v.CreatedAt,
 	}
 }

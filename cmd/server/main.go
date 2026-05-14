@@ -64,6 +64,7 @@ func main() {
 	feedSvc    := service.NewFeedService(
 		service.NewLatestFetcher(videoRepo),
 		service.NewFollowingFetcher(videoRepo),
+		service.NewPopularityFetcher(videoRepo),
 	)
 
 	storageBase := cfg.Storage.BaseDir
