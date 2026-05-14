@@ -50,12 +50,22 @@ func main() {
 	}
 
 	// 依赖注入：repository → service → handler
-	userRepo := repository.NewUserRepository(db)
-	userSvc := service.NewUserService(userRepo)
+	userRepo  := repository.NewUserRepository(db)
+	videoRepo := repository.NewVideoRepository(db)
 
+	userSvc  := service.NewUserService(userRepo)
+	videoSvc := service.NewVideoService(videoRepo, cfg.Storage)
+	feedSvc  := service.NewFeedService(
+		service.NewLatestFetcher(videoRepo),
+		// 后续在此追加新 fetcher，如 service.NewLikeCountFetcher(videoRepo)
+	)
+
+	storageBase := cfg.Storage.BaseDir
 	r := router.New(&router.Handlers{
-		User: api.NewUserHandler(userSvc),
-	})
+		User:  api.NewUserHandler(userSvc),
+		Video: api.NewVideoHandler(videoSvc),
+		Feed:  api.NewFeedHandler(feedSvc),
+	}, storageBase)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
