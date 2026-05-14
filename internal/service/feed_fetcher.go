@@ -7,6 +7,12 @@ import (
 	"xinfeedsystem/internal/repository"
 )
 
+// feedCtxKey 避免与其他包的 string key 冲突。
+type feedCtxKey string
+
+// FeedUserIDKey 供 handler 注入当前登录用户 ID，FollowingFetcher 读取。
+const FeedUserIDKey feedCtxKey = "feed_user_id"
+
 // FeedFetcher 是所有 Feed 策略的公共接口。
 // 新增一种 Feed 类型只需实现此接口并注册到 FeedService，无需改动已有代码。
 //
@@ -46,13 +52,23 @@ func (f *LatestFetcher) Fetch(ctx context.Context, score, cursorID int64, limit 
 func (f *LatestFetcher) ScoreOf(v *entity.Video) int64 { return v.CreatedAt }
 
 // ──────────────────────────────────────────────
-// 扩展占位（实现接口后在 main.go 注册即可）：
-//
-//   type LikeCountFetcher struct{ videoRepo *repository.VideoRepository }
-//   func (f *LikeCountFetcher) Type() string { return "like_count" }
-//   func (f *LikeCountFetcher) ScoreOf(v *entity.Video) int64 { return int64(v.LikeCount) }
-//
-//   type FollowingFetcher struct{ videoRepo *repository.VideoRepository; followRepo *repository.FollowRepository }
-//   func (f *FollowingFetcher) Type() string { return "following" }
-//   func (f *FollowingFetcher) ScoreOf(v *entity.Video) int64 { return v.CreatedAt }
+// FollowingFetcher  关注流（拉模式，按发布时间倒序）
 // ──────────────────────────────────────────────
+
+type FollowingFetcher struct {
+	videoRepo *repository.VideoRepository
+}
+
+func NewFollowingFetcher(videoRepo *repository.VideoRepository) *FollowingFetcher {
+	return &FollowingFetcher{videoRepo: videoRepo}
+}
+
+func (f *FollowingFetcher) Type() string { return "following" }
+
+// Fetch 从 context 取登录用户 ID，查其关注的人发布的视频。
+func (f *FollowingFetcher) Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error) {
+	followerID, _ := ctx.Value(FeedUserIDKey).(int64)
+	return f.videoRepo.ListByFollowing(ctx, followerID, score, cursorID, limit)
+}
+
+func (f *FollowingFetcher) ScoreOf(v *entity.Video) int64 { return v.CreatedAt }

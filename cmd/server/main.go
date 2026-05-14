@@ -63,7 +63,7 @@ func main() {
 	followSvc  := service.NewFollowService(followRepo, userRepo)
 	feedSvc    := service.NewFeedService(
 		service.NewLatestFetcher(videoRepo),
-		// 后续在此追加新 fetcher，如 service.NewLikeCountFetcher(videoRepo)
+		service.NewFollowingFetcher(videoRepo),
 	)
 
 	storageBase := cfg.Storage.BaseDir

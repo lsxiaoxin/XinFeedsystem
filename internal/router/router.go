@@ -45,8 +45,8 @@ func New(h *Handlers, staticDir string) *gin.Engine {
 		public.GET("/video/:id", h.Video.GetDetail)
 		public.GET("/video/list", h.Video.ListByAuthorID)
 
-		// Feed（公开可见）
-		public.GET("/feed", h.Feed.GetFeed)
+		// Feed（公开可见，following 类型需要 token；OptionalAuth 软解析不阻断）
+		public.GET("/feed", middleware.OptionalAuth(), h.Feed.GetFeed)
 
 		// 评论列表（公开可见）
 		public.GET("/comment/list", h.Comment.List)

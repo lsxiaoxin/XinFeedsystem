@@ -42,6 +42,18 @@ func extractToken(c *gin.Context) string {
 	return c.Query("token")
 }
 
+// OptionalAuth 尝试解析 token，成功则注入 user_id；token 缺失或无效时直接放行（不中断请求）。
+func OptionalAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if token := extractToken(c); token != "" {
+			if claims, err := pkgjwt.Parse(token); err == nil {
+				c.Set(CtxUserID, claims.UserID)
+			}
+		}
+		c.Next()
+	}
+}
+
 func GetUserID(c *gin.Context) int64 {
 	id, _ := c.Get(CtxUserID)
 	uid, _ := id.(int64)

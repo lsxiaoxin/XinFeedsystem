@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 	"xinfeedsystem/internal/errcode"
+	"xinfeedsystem/internal/middleware"
 	"xinfeedsystem/internal/model/dto"
 	"xinfeedsystem/internal/service"
 	"xinfeedsystem/pkg/response"
@@ -31,7 +34,18 @@ func (h *FeedHandler) GetFeed(c *gin.Context) {
 		response.Fail(c, errcode.InvalidParam, err.Error())
 		return
 	}
-	resp, err := h.feedSvc.GetFeed(c.Request.Context(), &req)
+
+	ctx := c.Request.Context()
+	if req.Type == "following" {
+		uid := middleware.GetUserID(c)
+		if uid == 0 {
+			response.FailWithErr(c, errcode.Unauthorized)
+			return
+		}
+		ctx = context.WithValue(ctx, service.FeedUserIDKey, uid)
+	}
+
+	resp, err := h.feedSvc.GetFeed(ctx, &req)
 	if err != nil {
 		handleSvcError(c, err)
 		return

@@ -44,6 +44,22 @@ func (r *VideoRepository) ListByAuthorID(ctx context.Context, authorID, cursorTi
 	return list, q.Find(&list).Error
 }
 
+// ListByFollowing 拉取 followerID 关注的人发布的视频，游标分页按发布时间倒序。
+func (r *VideoRepository) ListByFollowing(ctx context.Context, followerID, cursorTime, cursorID int64, limit int) ([]*entity.Video, error) {
+	q := r.db.WithContext(ctx).
+		Where("author_id IN (SELECT followee_id FROM follows WHERE follower_id = ? AND deleted_at IS NULL)", followerID).
+		Where("status = 1").
+		Order("created_at DESC, id DESC").
+		Limit(limit)
+
+	if cursorTime > 0 {
+		q = q.Where("created_at < ? OR (created_at = ? AND id < ?)", cursorTime, cursorTime, cursorID)
+	}
+
+	var list []*entity.Video
+	return list, q.Find(&list).Error
+}
+
 // ListLatest 全站最新视频游标分页，供 LatestFeedFetcher 使用。
 func (r *VideoRepository) ListLatest(ctx context.Context, cursorTime, cursorID int64, limit int) ([]*entity.Video, error) {
 	q := r.db.WithContext(ctx).
