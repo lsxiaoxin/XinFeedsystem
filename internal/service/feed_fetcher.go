@@ -2,118 +2,276 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"time"
 
+	"github.com/redis/go-redis/v9"
 	"xinfeedsystem/internal/errcode"
 	"xinfeedsystem/internal/model/entity"
 	"xinfeedsystem/internal/repository"
+	"xinfeedsystem/pkg/cache"
+	"xinfeedsystem/pkg/cursor"
 )
 
-// feedCtxKey 避免与其他包的 string key 冲突。
+// feedCtxKey avoids collisions with other packages' string keys.
 type feedCtxKey string
 
-// FeedUserIDKey 供 handler 注入当前登录用户 ID，FollowingFetcher 读取。
+// FeedUserIDKey is set by the handler so FollowingFetcher can read the caller's ID.
 const FeedUserIDKey feedCtxKey = "feed_user_id"
 
-// FeedFetcher 是所有 Feed 策略的公共接口。
-// 新增一种 Feed 类型只需实现此接口并注册到 FeedService，无需改动已有代码。
-//
-// Fetch 负责查询数据，调用方传入 (score, cursorID, limit)，返回视频列表。
-// ScoreOf 返回某条视频在该策略下的游标得分，FeedService 用它生成 next_cursor。
-//   - LatestFetcher    → ScoreOf = v.CreatedAt  (ms)
-//   - LikeCountFetcher → ScoreOf = int64(v.LikeCount)
-//   - PopularityFetcher → ScoreOf = 综合分
+// FeedFetcher is the strategy interface for all feed types.
+// Each fetcher owns its cursor format; FeedService is cursor-agnostic.
 type FeedFetcher interface {
-	// Type 返回策略唯一标识，用于路由分发。
 	Type() string
-	// Fetch 返回最多 limit 条视频。
-	Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error)
-	// ScoreOf 返回该条视频在此策略下的排序得分，用于生成游标。
-	ScoreOf(v *entity.Video) int64
+	// Fetch returns at most limit videos, the next opaque cursor, and whether more pages exist.
+	Fetch(ctx context.Context, rawCursor string, limit int) (videos []*entity.Video, nextCursor string, hasMore bool, err error)
 }
 
-// ──────────────────────────────────────────────
-// LatestFetcher  按发布时间倒序
-// ──────────────────────────────────────────────
+// ─── LatestFetcher ─────────────────────────────────────────────────────────
 
 type LatestFetcher struct {
 	videoRepo *repository.VideoRepository
 }
 
-func NewLatestFetcher(videoRepo *repository.VideoRepository) *LatestFetcher {
-	return &LatestFetcher{videoRepo: videoRepo}
+func NewLatestFetcher(r *repository.VideoRepository) *LatestFetcher {
+	return &LatestFetcher{videoRepo: r}
 }
-
 func (f *LatestFetcher) Type() string { return "latest" }
 
-func (f *LatestFetcher) Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error) {
-	return f.videoRepo.ListLatest(ctx, score, cursorID, limit)
+func (f *LatestFetcher) Fetch(ctx context.Context, rawCursor string, limit int) ([]*entity.Video, string, bool, error) {
+	score, id, _ := cursor.Decode(rawCursor)
+	videos, err := f.videoRepo.ListLatest(ctx, score, id, limit+1)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return buildTimeResult(videos, limit)
 }
 
-// ScoreOf 对 LatestFetcher 来说，排序得分就是 created_at (ms)。
-func (f *LatestFetcher) ScoreOf(v *entity.Video) int64 { return v.CreatedAt }
-
-// ──────────────────────────────────────────────
-// FollowingFetcher  关注流（拉模式，按发布时间倒序）
-// ──────────────────────────────────────────────
+// ─── FollowingFetcher ──────────────────────────────────────────────────────
 
 type FollowingFetcher struct {
 	videoRepo *repository.VideoRepository
+	rdb       *redis.Client
 }
 
-func NewFollowingFetcher(videoRepo *repository.VideoRepository) *FollowingFetcher {
-	return &FollowingFetcher{videoRepo: videoRepo}
+func NewFollowingFetcher(r *repository.VideoRepository, rdb *redis.Client) *FollowingFetcher {
+	return &FollowingFetcher{videoRepo: r, rdb: rdb}
 }
-
 func (f *FollowingFetcher) Type() string { return "following" }
 
-// Fetch 从 context 取登录用户 ID，查其关注的人发布的视频。
-func (f *FollowingFetcher) Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error) {
+func (f *FollowingFetcher) Fetch(ctx context.Context, rawCursor string, limit int) ([]*entity.Video, string, bool, error) {
 	followerID, ok := ctx.Value(FeedUserIDKey).(int64)
 	if !ok || followerID == 0 {
-		return nil, errcode.New(errcode.Unauthorized)
+		return nil, "", false, errcode.New(errcode.Unauthorized)
 	}
-	return f.videoRepo.ListByFollowing(ctx, followerID, score, cursorID, limit)
+
+	cursorTag := rawCursor
+	if cursorTag == "" {
+		cursorTag = "first"
+	}
+	cacheKey := fmt.Sprintf("feed:following:%d:%s", followerID, cursorTag)
+
+	// Try Redis: stored as a JSON list of video IDs (limit+1 for hasMore detection).
+	var ids []int64
+	if hit, isNil, _ := cache.GetJSON(ctx, f.rdb, cacheKey, &ids); hit && !isNil && len(ids) > 0 {
+		videos, err := fetchVideosByIDs(ctx, f.rdb, f.videoRepo, ids)
+		if err != nil {
+			return nil, "", false, err
+		}
+		return buildTimeResult(videos, limit)
+	}
+
+	// Cache miss → DB query.
+	score, id, _ := cursor.Decode(rawCursor)
+	videos, err := f.videoRepo.ListByFollowing(ctx, followerID, score, id, limit+1)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	// Cache the IDs (including the extra item so the cached path can detect hasMore).
+	idList := make([]int64, len(videos))
+	for i, v := range videos {
+		idList[i] = v.ID
+	}
+	_ = cache.SetJSON(ctx, f.rdb, cacheKey, idList, 60*time.Second)
+
+	return buildTimeResult(videos, limit)
 }
 
-func (f *FollowingFetcher) ScoreOf(v *entity.Video) int64 { return v.CreatedAt }
+// ─── SnapshotFetcher (popularity / like_count) ─────────────────────────────
 
-// ──────────────────────────────────────────────
-// LikeCountFetcher  按点赞数倒序
-// ──────────────────────────────────────────────
-
-type LikeCountFetcher struct {
+// SnapshotFetcher reads from a Redis ZSet snapshot for stable ranked pagination.
+// Cursor encodes (snapshot epoch, rank offset) so the view is frozen mid-scroll.
+type SnapshotFetcher struct {
+	snapType  string // "popularity" or "like_count"
+	rdb       *redis.Client
 	videoRepo *repository.VideoRepository
 }
 
-func NewLikeCountFetcher(videoRepo *repository.VideoRepository) *LikeCountFetcher {
-	return &LikeCountFetcher{videoRepo: videoRepo}
+func NewSnapshotFetcher(snapType string, rdb *redis.Client, r *repository.VideoRepository) *SnapshotFetcher {
+	return &SnapshotFetcher{snapType: snapType, rdb: rdb, videoRepo: r}
+}
+func (f *SnapshotFetcher) Type() string { return f.snapType }
+
+func (f *SnapshotFetcher) Fetch(ctx context.Context, rawCursor string, limit int) ([]*entity.Video, string, bool, error) {
+	sc, err := cursor.DecodeSnapshot(rawCursor)
+	if err != nil {
+		return nil, "", false, errcode.New(errcode.InvalidParam)
+	}
+
+	epoch, offset, err := f.resolveEpoch(ctx, sc)
+	if err != nil {
+		// No snapshot yet (fresh startup) → fall back to DB.
+		return f.fetchFromDB(ctx, limit)
+	}
+
+	snapKey := fmt.Sprintf("snapshot:%s:v%d", f.snapType, epoch)
+	// Request limit+1 to detect hasMore without an extra ZCARD call.
+	members, err := f.rdb.ZRevRange(ctx, snapKey, offset, offset+int64(limit)).Result()
+	if err != nil || len(members) == 0 {
+		return f.fetchFromDB(ctx, limit)
+	}
+
+	hasMore := int64(len(members)) > int64(limit)
+	if hasMore {
+		members = members[:limit]
+	}
+
+	ids := make([]int64, len(members))
+	for i, m := range members {
+		ids[i], _ = strconv.ParseInt(m, 10, 64)
+	}
+
+	videos, err := fetchVideosByIDs(ctx, f.rdb, f.videoRepo, ids)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	var nextCursor string
+	if hasMore {
+		nextCursor = cursor.EncodeSnapshot(cursor.SnapshotCursor{
+			Version: epoch,
+			Offset:  offset + int64(limit),
+		})
+	}
+	return videos, nextCursor, hasMore, nil
 }
 
-func (f *LikeCountFetcher) Type() string { return "like_count" }
+// resolveEpoch returns the (epoch, startOffset) to use.
+// If the client's stored snapshot has expired, it falls back to the current epoch
+// and resets the offset to 0 (transparent restart from the new ranking).
+func (f *SnapshotFetcher) resolveEpoch(ctx context.Context, sc cursor.SnapshotCursor) (epoch, offset int64, err error) {
+	currentKey := fmt.Sprintf("snapshot:%s:current", f.snapType)
 
-func (f *LikeCountFetcher) Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error) {
-	return f.videoRepo.ListByLikeCount(ctx, score, cursorID, limit)
+	if sc.Version == 0 {
+		// First page: use the latest snapshot.
+		epochStr, rerr := f.rdb.Get(ctx, currentKey).Result()
+		if rerr != nil {
+			return 0, 0, rerr
+		}
+		epoch, err = strconv.ParseInt(epochStr, 10, 64)
+		return epoch, 0, err
+	}
+
+	// Subsequent page: check if the client's snapshot is still alive.
+	snapKey := fmt.Sprintf("snapshot:%s:v%d", f.snapType, sc.Version)
+	exists, _ := f.rdb.Exists(ctx, snapKey).Result()
+	if exists > 0 {
+		return sc.Version, sc.Offset, nil
+	}
+
+	// Snapshot expired → transparent fallback to current epoch, offset=0.
+	epochStr, rerr := f.rdb.Get(ctx, currentKey).Result()
+	if rerr != nil {
+		return 0, 0, rerr
+	}
+	epoch, err = strconv.ParseInt(epochStr, 10, 64)
+	return epoch, 0, err
 }
 
-func (f *LikeCountFetcher) ScoreOf(v *entity.Video) int64 { return int64(v.LikeCount) }
-
-// ──────────────────────────────────────────────
-// PopularityFetcher  按热度（Heat）倒序
-// ──────────────────────────────────────────────
-
-type PopularityFetcher struct {
-	videoRepo *repository.VideoRepository
+// fetchFromDB is used when no ZSet snapshot is available yet (e.g. right after startup).
+func (f *SnapshotFetcher) fetchFromDB(ctx context.Context, limit int) ([]*entity.Video, string, bool, error) {
+	var (
+		videos []*entity.Video
+		err    error
+	)
+	switch f.snapType {
+	case "popularity":
+		videos, err = f.videoRepo.ListByHeat(ctx, 0, 0, limit+1)
+	default:
+		videos, err = f.videoRepo.ListByLikeCount(ctx, 0, 0, limit+1)
+	}
+	if err != nil {
+		return nil, "", false, err
+	}
+	hasMore := len(videos) > limit
+	if hasMore {
+		videos = videos[:limit]
+	}
+	return videos, "", hasMore, nil
 }
 
-func NewPopularityFetcher(videoRepo *repository.VideoRepository) *PopularityFetcher {
-	return &PopularityFetcher{videoRepo: videoRepo}
+// ─── shared helpers ────────────────────────────────────────────────────────
+
+// buildTimeResult cuts videos to limit and generates a (created_at, id) next cursor.
+func buildTimeResult(videos []*entity.Video, limit int) ([]*entity.Video, string, bool, error) {
+	hasMore := len(videos) > limit
+	if hasMore {
+		videos = videos[:limit]
+	}
+	var nextCursor string
+	if hasMore && len(videos) > 0 {
+		last := videos[len(videos)-1]
+		nextCursor = cursor.Encode(last.CreatedAt, last.ID)
+	}
+	return videos, nextCursor, hasMore, nil
 }
 
-func (f *PopularityFetcher) Type() string { return "popularity" }
+// fetchVideosByIDs fetches video details using Cache-Aside, preserving the order of ids.
+// Videos that no longer exist in DB or cache are silently dropped.
+func fetchVideosByIDs(ctx context.Context, rdb *redis.Client, repo *repository.VideoRepository, ids []int64) ([]*entity.Video, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
 
-func (f *PopularityFetcher) Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error) {
-	return f.videoRepo.ListByHeat(ctx, score, cursorID, limit)
+	result := make([]*entity.Video, len(ids))
+	missIdx := make(map[int64]int) // video id → index in result
+
+	for i, id := range ids {
+		var v entity.Video
+		hit, isNil, err := cache.GetJSON(ctx, rdb, fmt.Sprintf("video:detail:%d", id), &v)
+		if err == nil && hit && !isNil {
+			result[i] = &v
+		} else if !isNil {
+			missIdx[id] = i
+		}
+	}
+
+	if len(missIdx) > 0 {
+		missIDs := make([]int64, 0, len(missIdx))
+		for id := range missIdx {
+			missIDs = append(missIDs, id)
+		}
+		dbVideos, err := repo.FindByIDs(ctx, missIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range dbVideos {
+			_ = cache.SetJSON(ctx, rdb, fmt.Sprintf("video:detail:%d", v.ID), v,
+				cache.RandomizedTTL(5*time.Minute, 30*time.Second))
+			if idx, ok := missIdx[v.ID]; ok {
+				result[idx] = v
+			}
+		}
+	}
+
+	// Compact: drop nils (deleted or not-found videos).
+	out := result[:0]
+	for _, v := range result {
+		if v != nil {
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
-
-// ScoreOf 热榜得分就是 heat 字段本身。
-func (f *PopularityFetcher) ScoreOf(v *entity.Video) int64 { return v.Heat }

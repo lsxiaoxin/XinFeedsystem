@@ -90,6 +90,15 @@ func (r *VideoRepository) ListByLikeCount(ctx context.Context, cursorLikes, curs
 	return list, q.Find(&list).Error
 }
 
+// FindByIDs 按 ID 列表批量查询，返回找到的全部视频（顺序不保证，由调用方排序）。
+func (r *VideoRepository) FindByIDs(ctx context.Context, ids []int64) ([]*entity.Video, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var list []*entity.Video
+	return list, r.db.WithContext(ctx).Where("id IN ?", ids).Find(&list).Error
+}
+
 // ListLatest 全站最新视频游标分页，供 LatestFeedFetcher 使用。
 func (r *VideoRepository) ListLatest(ctx context.Context, cursorTime, cursorID int64, limit int) ([]*entity.Video, error) {
 	q := r.db.WithContext(ctx).

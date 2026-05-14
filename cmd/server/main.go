@@ -57,6 +57,10 @@ func main() {
 	defer rdb.Close()
 	logger.Info("redis connected", zap.String("addr", fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port)))
 
+	// appCtx is cancelled on SIGINT/SIGTERM to stop background goroutines.
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
+
 	// 依赖注入：repository → service → handler
 	userRepo    := repository.NewUserRepository(db)
 	videoRepo   := repository.NewVideoRepository(db)
@@ -69,11 +73,16 @@ func main() {
 	likeSvc    := service.NewLikeService(likeRepo, rdb)
 	commentSvc := service.NewCommentService(commentRepo, userRepo, rdb)
 	followSvc  := service.NewFollowService(followRepo, userRepo, rdb)
-	feedSvc    := service.NewFeedService(
+
+	snapshotSvc := service.NewSnapshotService(videoRepo, rdb)
+	snapshotSvc.Start(appCtx)
+	logger.Info("snapshot service started")
+
+	feedSvc := service.NewFeedService(
 		service.NewLatestFetcher(videoRepo),
-		service.NewFollowingFetcher(videoRepo),
-		service.NewPopularityFetcher(videoRepo),
-		service.NewLikeCountFetcher(videoRepo),
+		service.NewFollowingFetcher(videoRepo, rdb),
+		service.NewSnapshotFetcher("popularity", rdb, videoRepo),
+		service.NewSnapshotFetcher("like_count", rdb, videoRepo),
 	)
 
 	storageBase := cfg.Storage.BaseDir
@@ -104,6 +113,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	appCancel() // stop background goroutines (snapshot service, etc.)
 	logger.Info("shutting down server...")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
