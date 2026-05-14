@@ -85,6 +85,7 @@ func main() {
 		service.NewSnapshotFetcher("like_count", rdb, videoRepo),
 	)
 
+	tokenCache := repository.NewTokenCache(rdb)
 	storageBase := cfg.Storage.BaseDir
 	r := router.New(&router.Handlers{
 		User:    api.NewUserHandler(userSvc),
@@ -93,7 +94,7 @@ func main() {
 		Like:    api.NewLikeHandler(likeSvc),
 		Comment: api.NewCommentHandler(commentSvc),
 		Follow:  api.NewFollowHandler(followSvc),
-	}, userRepo, storageBase)
+	}, userRepo, tokenCache, storageBase)
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),

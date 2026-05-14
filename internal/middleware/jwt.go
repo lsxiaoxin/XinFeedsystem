@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"xinfeedsystem/internal/errcode"
@@ -12,8 +13,9 @@ import (
 
 const CtxUserID = "user_id"
 
-// JWTAuth 强制鉴权：验签 + 比对 DB 中存储的 token，不一致视为已登出或被顶替。
-func JWTAuth(userRepo *repository.UserRepository) gin.HandlerFunc {
+// JWTAuth enforces authentication: verifies the JWT signature, then validates
+// the token against the active session (Redis → DB fallback).
+func JWTAuth(userRepo *repository.UserRepository, tokenCache *repository.TokenCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenStr := extractToken(c)
 		if tokenStr == "" {
@@ -31,8 +33,7 @@ func JWTAuth(userRepo *repository.UserRepository) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		stored, err := userRepo.FindTokenByUserID(c.Request.Context(), claims.UserID)
-		if err != nil || stored != tokenStr {
+		if !validateToken(c, claims, tokenStr, userRepo, tokenCache) {
 			response.FailWithErr(c, errcode.TokenInvalid)
 			c.Abort()
 			return
@@ -42,19 +43,45 @@ func JWTAuth(userRepo *repository.UserRepository) gin.HandlerFunc {
 	}
 }
 
-// OptionalAuth 尝试解析 token 并比对 DB；token 缺失或无效时直接放行。
-func OptionalAuth(userRepo *repository.UserRepository) gin.HandlerFunc {
+// OptionalAuth attempts to authenticate; requests without a valid token are allowed through.
+func OptionalAuth(userRepo *repository.UserRepository, tokenCache *repository.TokenCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenStr := extractToken(c)
 		if tokenStr != "" {
 			if claims, err := pkgjwt.Parse(tokenStr); err == nil {
-				if stored, err := userRepo.FindTokenByUserID(c.Request.Context(), claims.UserID); err == nil && stored == tokenStr {
+				if validateToken(c, claims, tokenStr, userRepo, tokenCache) {
 					c.Set(CtxUserID, claims.UserID)
 				}
 			}
 		}
 		c.Next()
 	}
+}
+
+// validateToken checks the token against Redis (fast path) then DB (fallback).
+// On a DB hit it back-fills Redis so subsequent requests skip the DB query.
+func validateToken(c *gin.Context, claims *pkgjwt.Claims, tokenStr string,
+	userRepo *repository.UserRepository, tokenCache *repository.TokenCache) bool {
+
+	ctx := c.Request.Context()
+
+	// Fast path: Redis hit.
+	if cached, err := tokenCache.Get(ctx, claims.UserID); err == nil && cached != "" {
+		return cached == tokenStr
+	}
+
+	// Redis miss (or error) → fall back to DB.
+	stored, err := userRepo.FindTokenByUserID(ctx, claims.UserID)
+	if err != nil || stored != tokenStr {
+		return false
+	}
+
+	// Back-fill Redis: TTL = remaining JWT lifetime so it expires with the token.
+	remaining := time.Until(claims.ExpiresAt.Time)
+	if remaining > 0 {
+		_ = tokenCache.Save(ctx, claims.UserID, tokenStr, remaining)
+	}
+	return true
 }
 
 func extractToken(c *gin.Context) string {

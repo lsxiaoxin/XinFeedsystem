@@ -27,6 +27,9 @@ func Init(sec, iss string, exp time.Duration) {
 	expire = exp
 }
 
+// Expire returns the configured token lifetime, used to set Redis TTL on login.
+func Expire() time.Duration { return expire }
+
 func Sign(userID int64) (string, error) {
 	now := time.Now()
 	claims := Claims{

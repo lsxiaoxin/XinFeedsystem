@@ -19,7 +19,7 @@ type Handlers struct {
 	Follow  *api.FollowHandler
 }
 
-func New(h *Handlers, userRepo *repository.UserRepository, staticDir string) *gin.Engine {
+func New(h *Handlers, userRepo *repository.UserRepository, tokenCache *repository.TokenCache, staticDir string) *gin.Engine {
 	r := gin.New()
 	r.Use(middleware.Recovery())
 	r.Use(gin.Logger())
@@ -44,13 +44,13 @@ func New(h *Handlers, userRepo *repository.UserRepository, staticDir string) *gi
 		public.GET("/video/list", h.Video.ListByAuthorID)
 
 		// Feed（following 类型需 token；OptionalAuth 软解析不阻断）
-		public.GET("/feed", middleware.OptionalAuth(userRepo), h.Feed.GetFeed)
+		public.GET("/feed", middleware.OptionalAuth(userRepo, tokenCache), h.Feed.GetFeed)
 
 		public.GET("/comment/list", h.Comment.List)
 	}
 
 	// ── 需要鉴权 ──────────────────────────────────
-	auth := v1.Group("", middleware.JWTAuth(userRepo))
+	auth := v1.Group("", middleware.JWTAuth(userRepo, tokenCache))
 	{
 		auth.GET("/user/me", h.User.GetMe)
 		auth.POST("/user/logout", h.User.Logout)

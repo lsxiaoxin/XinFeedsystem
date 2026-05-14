@@ -18,13 +18,19 @@ import (
 )
 
 type UserService struct {
-	userRepo *repository.UserRepository
-	rdb      *redis.Client
-	lock     *redislock.Lock
+	userRepo   *repository.UserRepository
+	rdb        *redis.Client
+	lock       *redislock.Lock
+	tokenCache *repository.TokenCache
 }
 
 func NewUserService(userRepo *repository.UserRepository, rdb *redis.Client) *UserService {
-	return &UserService{userRepo: userRepo, rdb: rdb, lock: redislock.New(rdb)}
+	return &UserService{
+		userRepo:   userRepo,
+		rdb:        rdb,
+		lock:       redislock.New(rdb),
+		tokenCache: repository.NewTokenCache(rdb),
+	}
 }
 
 func userInfoKey(id int64) string { return fmt.Sprintf("user:info:%d", id) }
@@ -69,13 +75,18 @@ func (s *UserService) Login(ctx context.Context, req *dto.LoginRequest) (string,
 	if err != nil {
 		return "", nil, err
 	}
+	// Write to Redis first (best-effort; Redis down doesn't block login).
+	_ = s.tokenCache.Save(ctx, user.ID, token, pkgjwt.Expire())
+	// Write to DB (source of truth). Roll back Redis on failure.
 	if err := s.userRepo.SaveToken(ctx, user.ID, token); err != nil {
+		_ = s.tokenCache.Delete(ctx, user.ID)
 		return "", nil, err
 	}
 	return token, user, nil
 }
 
 func (s *UserService) Logout(ctx context.Context, userID int64) error {
+	_ = s.tokenCache.Delete(ctx, userID) // best-effort; don't block on Redis error
 	return s.userRepo.ClearToken(ctx, userID)
 }
 
