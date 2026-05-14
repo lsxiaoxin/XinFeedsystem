@@ -63,7 +63,7 @@ pkg/
 
 ---
 
-## 接口总览（阶段一，共 15 个）
+## 接口总览（阶段一，共 18 个）
 
 | 模块 | 方法 | 路径 | 认证 |
 |---|---|---|---|
@@ -77,6 +77,7 @@ pkg/
 | Feed | GET | /api/v1/feed?type=latest | — |
 | Feed | GET | /api/v1/feed?type=following | JWT |
 | Feed | GET | /api/v1/feed?type=popularity | — |
+| Feed | GET | /api/v1/feed?type=like_count | — |
 | 点赞 | POST | /api/v1/like/action | JWT |
 | 点赞 | GET | /api/v1/like/list | JWT |
 | 评论 | POST | /api/v1/comment/action | JWT |
@@ -101,10 +102,11 @@ type FeedFetcher interface {
 }
 ```
 
-目前已实现三种策略：
+目前已实现四种策略：
 - **LatestFetcher** — 全站时间倒序（score = created_at）
 - **FollowingFetcher** — 关注流拉模式，IN 子查询（score = created_at）
 - **PopularityFetcher** — 热榜，按 heat 字段倒序（score = heat）
+- **LikeCountFetcher** — 按点赞数倒序（score = like_count）
 
 新增策略只需实现接口并在 `main.go` 注册，无需修改已有代码（开闭原则）。
 
@@ -166,7 +168,7 @@ Repository 层定义 sentinel error（`ErrAlreadyLiked`、`ErrNotFollowedYet` �
 - 主键全部使用 `BIGINT UNSIGNED` 雪花 ID，无自增
 - 时间字段使用毫秒时间戳（`DATETIME(3)`），GORM `autoCreateTime:milli`
 - 软删除字段 `deleted_at DATETIME(3) NULL`
-- 复合索引配合游标查询：`idx_author_created(author_id, created_at DESC)`、`idx_created(created_at DESC, id DESC)`、`idx_heat(heat DESC)`
+- 复合索引配合游标查询：`idx_author_created(author_id, created_at DESC)`、`idx_created(created_at DESC, id DESC)`、`idx_heat(heat DESC, id DESC)`、`idx_like_count(like_count DESC, id DESC)`
 - follows 表单表双索引（`follower→followee` + `followee→follower`）解决双向查询
 
 ---

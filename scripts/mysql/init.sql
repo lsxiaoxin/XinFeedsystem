@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `signature`      VARCHAR(140)    DEFAULT NULL COMMENT '个性签名',
   `follow_count`   INT UNSIGNED    NOT NULL DEFAULT 0 COMMENT '关注数（冗余）',
   `follower_count` INT UNSIGNED    NOT NULL DEFAULT 0 COMMENT '粉丝数（冗余）',
+  `token`          VARCHAR(512)    NOT NULL DEFAULT '' COMMENT '当前登录 token，单会话',
   `created_at`     DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at`     DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   `deleted_at`     DATETIME(3)     DEFAULT NULL,
@@ -43,13 +44,16 @@ CREATE TABLE IF NOT EXISTS `videos` (
   `like_count`    INT UNSIGNED    NOT NULL DEFAULT 0 COMMENT '点赞数（冗余）',
   `comment_count` INT UNSIGNED    NOT NULL DEFAULT 0 COMMENT '评论数（冗余）',
   `play_count`    BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '播放数（冗余）',
+  `heat`          BIGINT          NOT NULL DEFAULT 0 COMMENT '热度分（点赞+评论累计）',
   `status`        TINYINT         NOT NULL DEFAULT 1 COMMENT '0审核 1正常 2下架',
   `created_at`    DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `updated_at`    DATETIME(3)     NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   `deleted_at`    DATETIME(3)     DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_author_created` (`author_id`, `created_at` DESC),
-  KEY `idx_created`        (`created_at` DESC, `id` DESC)
+  KEY `idx_created`        (`created_at` DESC, `id` DESC),
+  KEY `idx_heat`           (`heat` DESC, `id` DESC),
+  KEY `idx_like_count`     (`like_count` DESC, `id` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='视频表';
 
 -- ---------------------------------------------------------------
