@@ -15,6 +15,7 @@ type Handlers struct {
 	Feed    *api.FeedHandler
 	Like    *api.LikeHandler
 	Comment *api.CommentHandler
+	Follow  *api.FollowHandler
 }
 
 func New(h *Handlers, staticDir string) *gin.Engine {
@@ -66,7 +67,14 @@ func New(h *Handlers, staticDir string) *gin.Engine {
 
 		// 评论（发/删需鉴权，列表公开）
 		auth.POST("/comment/action", h.Comment.Action)
+
+		// 关注（关注/取关需鉴权，列表公开）
+		auth.POST("/follow/action", h.Follow.Action)
 	}
+
+	// ── 关注列表（公开）───────────────────────────
+	v1.GET("/follow/following", h.Follow.Following)
+	v1.GET("/follow/follower", h.Follow.Follower)
 
 	return r
 }

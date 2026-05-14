@@ -54,11 +54,13 @@ func main() {
 	videoRepo   := repository.NewVideoRepository(db)
 	likeRepo    := repository.NewLikeRepository(db)
 	commentRepo := repository.NewCommentRepository(db)
+	followRepo  := repository.NewFollowRepository(db)
 
 	userSvc    := service.NewUserService(userRepo)
 	videoSvc   := service.NewVideoService(videoRepo, cfg.Storage)
 	likeSvc    := service.NewLikeService(likeRepo)
 	commentSvc := service.NewCommentService(commentRepo, userRepo)
+	followSvc  := service.NewFollowService(followRepo, userRepo)
 	feedSvc    := service.NewFeedService(
 		service.NewLatestFetcher(videoRepo),
 		// 后续在此追加新 fetcher，如 service.NewLikeCountFetcher(videoRepo)
@@ -71,6 +73,7 @@ func main() {
 		Feed:    api.NewFeedHandler(feedSvc),
 		Like:    api.NewLikeHandler(likeSvc),
 		Comment: api.NewCommentHandler(commentSvc),
+		Follow:  api.NewFollowHandler(followSvc),
 	}, storageBase)
 
 	srv := &http.Server{
