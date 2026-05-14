@@ -9,7 +9,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"xinfeedsystem/internal/errcode"
 	"xinfeedsystem/internal/model/entity"
-	"xinfeedsystem/internal/repository"
 	"xinfeedsystem/pkg/cache"
 	"xinfeedsystem/pkg/cursor"
 )
@@ -19,6 +18,16 @@ type feedCtxKey string
 
 // FeedUserIDKey is set by the handler so FollowingFetcher can read the caller's ID.
 const FeedUserIDKey feedCtxKey = "feed_user_id"
+
+// videoStore is the subset of repository.VideoRepository used by feed services.
+// Defined as an interface so tests can inject stubs without a real DB.
+type videoStore interface {
+	ListLatest(ctx context.Context, cursorTime, cursorID int64, limit int) ([]*entity.Video, error)
+	ListByFollowing(ctx context.Context, followerID, cursorTime, cursorID int64, limit int) ([]*entity.Video, error)
+	ListByHeat(ctx context.Context, cursorHeat, cursorID int64, limit int) ([]*entity.Video, error)
+	ListByLikeCount(ctx context.Context, cursorLikes, cursorID int64, limit int) ([]*entity.Video, error)
+	FindByIDs(ctx context.Context, ids []int64) ([]*entity.Video, error)
+}
 
 // FeedFetcher is the strategy interface for all feed types.
 // Each fetcher owns its cursor format; FeedService is cursor-agnostic.
@@ -31,10 +40,10 @@ type FeedFetcher interface {
 // ─── LatestFetcher ─────────────────────────────────────────────────────────
 
 type LatestFetcher struct {
-	videoRepo *repository.VideoRepository
+	videoRepo videoStore
 }
 
-func NewLatestFetcher(r *repository.VideoRepository) *LatestFetcher {
+func NewLatestFetcher(r videoStore) *LatestFetcher {
 	return &LatestFetcher{videoRepo: r}
 }
 func (f *LatestFetcher) Type() string { return "latest" }
@@ -51,11 +60,11 @@ func (f *LatestFetcher) Fetch(ctx context.Context, rawCursor string, limit int) 
 // ─── FollowingFetcher ──────────────────────────────────────────────────────
 
 type FollowingFetcher struct {
-	videoRepo *repository.VideoRepository
+	videoRepo videoStore
 	rdb       *redis.Client
 }
 
-func NewFollowingFetcher(r *repository.VideoRepository, rdb *redis.Client) *FollowingFetcher {
+func NewFollowingFetcher(r videoStore, rdb *redis.Client) *FollowingFetcher {
 	return &FollowingFetcher{videoRepo: r, rdb: rdb}
 }
 func (f *FollowingFetcher) Type() string { return "following" }
@@ -106,10 +115,10 @@ func (f *FollowingFetcher) Fetch(ctx context.Context, rawCursor string, limit in
 type SnapshotFetcher struct {
 	snapType  string // "popularity" or "like_count"
 	rdb       *redis.Client
-	videoRepo *repository.VideoRepository
+	videoRepo videoStore
 }
 
-func NewSnapshotFetcher(snapType string, rdb *redis.Client, r *repository.VideoRepository) *SnapshotFetcher {
+func NewSnapshotFetcher(snapType string, rdb *redis.Client, r videoStore) *SnapshotFetcher {
 	return &SnapshotFetcher{snapType: snapType, rdb: rdb, videoRepo: r}
 }
 func (f *SnapshotFetcher) Type() string { return f.snapType }
@@ -230,7 +239,7 @@ func buildTimeResult(videos []*entity.Video, limit int) ([]*entity.Video, string
 
 // fetchVideosByIDs fetches video details using Cache-Aside, preserving the order of ids.
 // Videos that no longer exist in DB or cache are silently dropped.
-func fetchVideosByIDs(ctx context.Context, rdb *redis.Client, repo *repository.VideoRepository, ids []int64) ([]*entity.Video, error) {
+func fetchVideosByIDs(ctx context.Context, rdb *redis.Client, repo videoStore, ids []int64) ([]*entity.Video, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}

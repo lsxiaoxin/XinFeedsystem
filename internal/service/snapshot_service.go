@@ -8,7 +8,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"xinfeedsystem/internal/model/entity"
-	"xinfeedsystem/internal/repository"
 )
 
 const snapshotSize = 1000
@@ -20,11 +19,11 @@ const snapshotSize = 1000
 //	snapshot:{type}:current   → latest epoch (string, no TTL)
 //	snapshot:{type}:v{epoch}  → ZSet member=video_id score=heat|like_count (TTL 15min)
 type SnapshotService struct {
-	videoRepo *repository.VideoRepository
+	videoRepo videoStore
 	rdb       *redis.Client
 }
 
-func NewSnapshotService(videoRepo *repository.VideoRepository, rdb *redis.Client) *SnapshotService {
+func NewSnapshotService(videoRepo videoStore, rdb *redis.Client) *SnapshotService {
 	return &SnapshotService{videoRepo: videoRepo, rdb: rdb}
 }
 
