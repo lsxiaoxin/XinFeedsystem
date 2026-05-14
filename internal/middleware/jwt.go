@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -12,6 +13,17 @@ import (
 )
 
 const CtxUserID = "user_id"
+
+// dbTokenReader is the DB-side dependency for token validation.
+type dbTokenReader interface {
+	FindTokenByUserID(ctx context.Context, userID int64) (string, error)
+}
+
+// cacheTokenStore is the Redis-side dependency for token validation.
+type cacheTokenStore interface {
+	Get(ctx context.Context, userID int64) (string, error)
+	Save(ctx context.Context, userID int64, token string, ttl time.Duration) error
+}
 
 // JWTAuth enforces authentication: verifies the JWT signature, then validates
 // the token against the active session (Redis → DB fallback).
@@ -33,7 +45,7 @@ func JWTAuth(userRepo *repository.UserRepository, tokenCache *repository.TokenCa
 			c.Abort()
 			return
 		}
-		if !validateToken(c, claims, tokenStr, userRepo, tokenCache) {
+		if !validateToken(c.Request.Context(), claims, tokenStr, userRepo, tokenCache) {
 			response.FailWithErr(c, errcode.TokenInvalid)
 			c.Abort()
 			return
@@ -49,7 +61,7 @@ func OptionalAuth(userRepo *repository.UserRepository, tokenCache *repository.To
 		tokenStr := extractToken(c)
 		if tokenStr != "" {
 			if claims, err := pkgjwt.Parse(tokenStr); err == nil {
-				if validateToken(c, claims, tokenStr, userRepo, tokenCache) {
+				if validateToken(c.Request.Context(), claims, tokenStr, userRepo, tokenCache) {
 					c.Set(CtxUserID, claims.UserID)
 				}
 			}
@@ -60,26 +72,23 @@ func OptionalAuth(userRepo *repository.UserRepository, tokenCache *repository.To
 
 // validateToken checks the token against Redis (fast path) then DB (fallback).
 // On a DB hit it back-fills Redis so subsequent requests skip the DB query.
-func validateToken(c *gin.Context, claims *pkgjwt.Claims, tokenStr string,
-	userRepo *repository.UserRepository, tokenCache *repository.TokenCache) bool {
-
-	ctx := c.Request.Context()
+func validateToken(ctx context.Context, claims *pkgjwt.Claims, tokenStr string,
+	db dbTokenReader, tc cacheTokenStore) bool {
 
 	// Fast path: Redis hit.
-	if cached, err := tokenCache.Get(ctx, claims.UserID); err == nil && cached != "" {
+	if cached, err := tc.Get(ctx, claims.UserID); err == nil && cached != "" {
 		return cached == tokenStr
 	}
 
 	// Redis miss (or error) → fall back to DB.
-	stored, err := userRepo.FindTokenByUserID(ctx, claims.UserID)
+	stored, err := db.FindTokenByUserID(ctx, claims.UserID)
 	if err != nil || stored != tokenStr {
 		return false
 	}
 
 	// Back-fill Redis: TTL = remaining JWT lifetime so it expires with the token.
-	remaining := time.Until(claims.ExpiresAt.Time)
-	if remaining > 0 {
-		_ = tokenCache.Save(ctx, claims.UserID, tokenStr, remaining)
+	if remaining := time.Until(claims.ExpiresAt.Time); remaining > 0 {
+		_ = tc.Save(ctx, claims.UserID, tokenStr, remaining)
 	}
 	return true
 }
