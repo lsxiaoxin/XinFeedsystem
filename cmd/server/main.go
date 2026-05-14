@@ -57,9 +57,6 @@ func main() {
 	defer rdb.Close()
 	logger.Info("redis connected", zap.String("addr", fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port)))
 
-	// 占位：后续阶段在此处注入 rdb 到 service 层
-	_ = rdb
-
 	// 依赖注入：repository → service → handler
 	userRepo    := repository.NewUserRepository(db)
 	videoRepo   := repository.NewVideoRepository(db)
@@ -68,9 +65,9 @@ func main() {
 	followRepo  := repository.NewFollowRepository(db)
 
 	userSvc    := service.NewUserService(userRepo)
-	videoSvc   := service.NewVideoService(videoRepo, cfg.Storage)
-	likeSvc    := service.NewLikeService(likeRepo)
-	commentSvc := service.NewCommentService(commentRepo, userRepo)
+	videoSvc   := service.NewVideoService(videoRepo, cfg.Storage, rdb)
+	likeSvc    := service.NewLikeService(likeRepo, rdb)
+	commentSvc := service.NewCommentService(commentRepo, userRepo, rdb)
 	followSvc  := service.NewFollowService(followRepo, userRepo)
 	feedSvc    := service.NewFeedService(
 		service.NewLatestFetcher(videoRepo),

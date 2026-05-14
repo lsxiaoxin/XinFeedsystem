@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	"github.com/redis/go-redis/v9"
 	"xinfeedsystem/internal/errcode"
 	"xinfeedsystem/internal/model/dto"
 	"xinfeedsystem/internal/model/entity"
@@ -14,10 +16,11 @@ import (
 type CommentService struct {
 	commentRepo *repository.CommentRepository
 	userRepo    *repository.UserRepository
+	rdb         *redis.Client
 }
 
-func NewCommentService(commentRepo *repository.CommentRepository, userRepo *repository.UserRepository) *CommentService {
-	return &CommentService{commentRepo: commentRepo, userRepo: userRepo}
+func NewCommentService(commentRepo *repository.CommentRepository, userRepo *repository.UserRepository, rdb *redis.Client) *CommentService {
+	return &CommentService{commentRepo: commentRepo, userRepo: userRepo, rdb: rdb}
 }
 
 func (s *CommentService) Post(ctx context.Context, userID int64, req *dto.CommentActionRequest) (*dto.CommentVO, error) {
@@ -37,6 +40,7 @@ func (s *CommentService) Post(ctx context.Context, userID int64, req *dto.Commen
 	if err := s.commentRepo.Create(ctx, c); err != nil {
 		return nil, err
 	}
+	_ = s.rdb.Del(ctx, fmt.Sprintf("video:detail:%d", req.VideoID))
 
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
@@ -53,14 +57,27 @@ func (s *CommentService) Delete(ctx context.Context, userID int64, req *dto.Comm
 	if req.CommentID == 0 {
 		return errcode.New(errcode.InvalidParam)
 	}
-	err := s.commentRepo.Delete(ctx, req.CommentID, userID)
+	// 先查出 comment 的 video_id，删除后用于失效缓存
+	c, err := s.commentRepo.FindByID(ctx, req.CommentID)
+	if err != nil {
+		return err
+	}
+	if c == nil {
+		return errcode.New(errcode.CommentNotFound)
+	}
+
+	err = s.commentRepo.Delete(ctx, req.CommentID, userID)
 	if errors.Is(err, repository.ErrCommentNotFound) {
 		return errcode.New(errcode.CommentNotFound)
 	}
 	if errors.Is(err, repository.ErrCommentForbidden) {
 		return errcode.New(errcode.Forbidden)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	_ = s.rdb.Del(ctx, fmt.Sprintf("video:detail:%d", c.VideoID))
+	return nil
 }
 
 func (s *CommentService) List(ctx context.Context, req *dto.CommentListRequest) (*dto.CommentListResponse, error) {

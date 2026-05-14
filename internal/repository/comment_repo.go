@@ -16,6 +16,15 @@ func NewCommentRepository(db *gorm.DB) *CommentRepository {
 	return &CommentRepository{db: db}
 }
 
+func (r *CommentRepository) FindByID(ctx context.Context, id int64) (*entity.Comment, error) {
+	var c entity.Comment
+	err := r.db.WithContext(ctx).First(&c, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &c, err
+}
+
 // Create 在事务内插入评论并更新视频评论数和热度。
 func (r *CommentRepository) Create(ctx context.Context, c *entity.Comment) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

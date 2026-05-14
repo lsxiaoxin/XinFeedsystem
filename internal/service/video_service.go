@@ -8,12 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/redis/go-redis/v9"
 	"xinfeedsystem/config"
 	"xinfeedsystem/internal/errcode"
 	"xinfeedsystem/internal/model/dto"
 	"xinfeedsystem/internal/model/entity"
 	"xinfeedsystem/internal/repository"
+	"xinfeedsystem/pkg/cache"
 	"xinfeedsystem/pkg/snowflake"
 )
 
@@ -23,11 +26,14 @@ const maxLimit = 50
 type VideoService struct {
 	videoRepo *repository.VideoRepository
 	store     config.StorageConfig
+	rdb       *redis.Client
 }
 
-func NewVideoService(videoRepo *repository.VideoRepository, store config.StorageConfig) *VideoService {
-	return &VideoService{videoRepo: videoRepo, store: store}
+func NewVideoService(videoRepo *repository.VideoRepository, store config.StorageConfig, rdb *redis.Client) *VideoService {
+	return &VideoService{videoRepo: videoRepo, store: store, rdb: rdb}
 }
+
+func videoDetailKey(id int64) string { return fmt.Sprintf("video:detail:%d", id) }
 
 func (s *VideoService) Publish(ctx context.Context, authorID int64, req *dto.VideoPublishRequest, file multipart.File, header *multipart.FileHeader) (*entity.Video, error) {
 	if header.Size > int64(s.store.MaxVideoSizeMB)*1024*1024 {
@@ -69,14 +75,27 @@ func (s *VideoService) Publish(ctx context.Context, authorID int64, req *dto.Vid
 }
 
 func (s *VideoService) GetDetail(ctx context.Context, id int64) (*entity.Video, error) {
-	v, err := s.videoRepo.FindByID(ctx, id)
+	key := videoDetailKey(id)
+
+	var v entity.Video
+	hit, isNil, err := cache.GetJSON(ctx, s.rdb, key, &v)
+	if err == nil && hit {
+		if isNil {
+			return nil, errcode.New(errcode.VideoNotFound)
+		}
+		return &v, nil
+	}
+
+	video, err := s.videoRepo.FindByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if v == nil {
+	if video == nil {
+		_ = cache.SetNil(ctx, s.rdb, key, 30*time.Second)
 		return nil, errcode.New(errcode.VideoNotFound)
 	}
-	return v, nil
+	_ = cache.SetJSON(ctx, s.rdb, key, video, cache.RandomizedTTL(5*time.Minute, 30*time.Second))
+	return video, nil
 }
 
 func (s *VideoService) ListByAuthorID(ctx context.Context, req *dto.VideoListByAuthorRequest) (*dto.VideoListResponse, error) {

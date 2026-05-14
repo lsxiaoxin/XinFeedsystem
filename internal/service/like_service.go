@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	"github.com/redis/go-redis/v9"
 	"xinfeedsystem/internal/errcode"
 	"xinfeedsystem/internal/model/dto"
 	"xinfeedsystem/internal/repository"
@@ -11,10 +13,11 @@ import (
 
 type LikeService struct {
 	likeRepo *repository.LikeRepository
+	rdb      *redis.Client
 }
 
-func NewLikeService(likeRepo *repository.LikeRepository) *LikeService {
-	return &LikeService{likeRepo: likeRepo}
+func NewLikeService(likeRepo *repository.LikeRepository, rdb *redis.Client) *LikeService {
+	return &LikeService{likeRepo: likeRepo, rdb: rdb}
 }
 
 func (s *LikeService) LikeAction(ctx context.Context, userID, videoID int64, actionType int) error {
@@ -31,7 +34,11 @@ func (s *LikeService) LikeAction(ctx context.Context, userID, videoID int64, act
 	if errors.Is(err, repository.ErrNotLikedYet) {
 		return errcode.New(errcode.NotLikedYet)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	_ = s.rdb.Del(ctx, fmt.Sprintf("video:detail:%d", videoID))
+	return nil
 }
 
 func (s *LikeService) ListLikedVideos(ctx context.Context, userID int64, req *dto.LikeListRequest) (*dto.LikeListResponse, error) {
