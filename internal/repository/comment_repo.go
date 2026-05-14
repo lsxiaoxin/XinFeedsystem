@@ -47,8 +47,12 @@ func (r *CommentRepository) Delete(ctx context.Context, commentID, userID int64)
 		if err := tx.Delete(&c).Error; err != nil {
 			return err
 		}
-		return tx.Model(&entity.Video{}).Where("id = ? AND comment_count > 0", c.VideoID).
-			UpdateColumn("comment_count", gorm.Expr("comment_count - 1")).Error
+		if err := tx.Model(&entity.Video{}).Where("id = ? AND comment_count > 0", c.VideoID).
+			UpdateColumn("comment_count", gorm.Expr("comment_count - 1")).Error; err != nil {
+			return err
+		}
+		return tx.Model(&entity.Video{}).Where("id = ? AND heat > 0", c.VideoID).
+			UpdateColumn("heat", gorm.Expr("heat - 1")).Error
 	})
 }
 

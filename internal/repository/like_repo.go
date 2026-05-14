@@ -89,8 +89,12 @@ func (r *LikeRepository) Unlike(ctx context.Context, userID, videoID int64) erro
 			return err
 		}
 
-		return tx.Model(&entity.Video{}).Where("id = ? AND like_count > 0", videoID).
-			UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error
+		if err := tx.Model(&entity.Video{}).Where("id = ? AND like_count > 0", videoID).
+			UpdateColumn("like_count", gorm.Expr("like_count - 1")).Error; err != nil {
+			return err
+		}
+		return tx.Model(&entity.Video{}).Where("id = ? AND heat > 0", videoID).
+			UpdateColumn("heat", gorm.Expr("heat - 1")).Error
 	})
 }
 
