@@ -15,8 +15,11 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 
 	"xinfeedsystem/config"
+	"xinfeedsystem/internal/api"
 	"xinfeedsystem/internal/model/entity"
+	"xinfeedsystem/internal/repository"
 	"xinfeedsystem/internal/router"
+	"xinfeedsystem/internal/service"
 	"xinfeedsystem/pkg/jwt"
 	"xinfeedsystem/pkg/logger"
 	"xinfeedsystem/pkg/snowflake"
@@ -45,9 +48,14 @@ func main() {
 	if err != nil {
 		logger.Fatal("init db", zap.Error(err))
 	}
-	_ = db // repository 层通过参数注入，此处占位供后续使用
 
-	r := router.New()
+	// 依赖注入：repository → service → handler
+	userRepo := repository.NewUserRepository(db)
+	userSvc := service.NewUserService(userRepo)
+
+	r := router.New(&router.Handlers{
+		User: api.NewUserHandler(userSvc),
+	})
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
