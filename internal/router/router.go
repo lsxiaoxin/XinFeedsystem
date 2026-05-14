@@ -13,6 +13,7 @@ type Handlers struct {
 	User  *api.UserHandler
 	Video *api.VideoHandler
 	Feed  *api.FeedHandler
+	Like  *api.LikeHandler
 }
 
 func New(h *Handlers, staticDir string) *gin.Engine {
@@ -54,6 +55,10 @@ func New(h *Handlers, staticDir string) *gin.Engine {
 
 		// 视频
 		auth.POST("/video/publish", h.Video.Publish)
+
+		// 点赞
+		auth.POST("/like/action", h.Like.Action)
+		auth.GET("/like/list", h.Like.List)
 	}
 
 	return r
