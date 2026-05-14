@@ -17,6 +17,7 @@ import (
 	"xinfeedsystem/internal/model/entity"
 	"xinfeedsystem/internal/repository"
 	"xinfeedsystem/pkg/cache"
+	"xinfeedsystem/pkg/redislock"
 	"xinfeedsystem/pkg/snowflake"
 )
 
@@ -27,10 +28,11 @@ type VideoService struct {
 	videoRepo *repository.VideoRepository
 	store     config.StorageConfig
 	rdb       *redis.Client
+	lock      *redislock.Lock
 }
 
 func NewVideoService(videoRepo *repository.VideoRepository, store config.StorageConfig, rdb *redis.Client) *VideoService {
-	return &VideoService{videoRepo: videoRepo, store: store, rdb: rdb}
+	return &VideoService{videoRepo: videoRepo, store: store, rdb: rdb, lock: redislock.New(rdb)}
 }
 
 func videoDetailKey(id int64) string { return fmt.Sprintf("video:detail:%d", id) }
@@ -77,25 +79,48 @@ func (s *VideoService) Publish(ctx context.Context, authorID int64, req *dto.Vid
 func (s *VideoService) GetDetail(ctx context.Context, id int64) (*entity.Video, error) {
 	key := videoDetailKey(id)
 
+	// Fast path: cache already populated, no lock needed.
 	var v entity.Video
-	hit, isNil, err := cache.GetJSON(ctx, s.rdb, key, &v)
-	if err == nil && hit {
+	if hit, isNil, err := cache.GetJSON(ctx, s.rdb, key, &v); err == nil && hit {
 		if isNil {
 			return nil, errcode.New(errcode.VideoNotFound)
 		}
 		return &v, nil
 	}
 
-	video, err := s.videoRepo.FindByID(ctx, id)
+	// Cache miss: only one goroutine queries the DB; the rest poll until it writes back.
+	result, err := s.lock.Do(ctx,
+		fmt.Sprintf("lock:video:detail:%d", id),
+		3*time.Second,   // lock TTL: loader must finish in < 3s
+		500*time.Millisecond, // max wait for losers
+		func() (interface{}, error) { // loader (lock winner)
+			video, err := s.videoRepo.FindByID(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if video == nil {
+				_ = cache.SetNil(ctx, s.rdb, key, 30*time.Second)
+				return nil, errcode.New(errcode.VideoNotFound)
+			}
+			_ = cache.SetJSON(ctx, s.rdb, key, video, cache.RandomizedTTL(5*time.Minute, 30*time.Second))
+			return video, nil
+		},
+		func() (interface{}, bool, error) { // waiter (lock losers polling cache)
+			var cached entity.Video
+			hit, isNil, err := cache.GetJSON(ctx, s.rdb, key, &cached)
+			if err != nil || !hit {
+				return nil, false, nil // not ready yet, keep polling
+			}
+			if isNil {
+				return nil, true, errcode.New(errcode.VideoNotFound)
+			}
+			return &cached, true, nil
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
-	if video == nil {
-		_ = cache.SetNil(ctx, s.rdb, key, 30*time.Second)
-		return nil, errcode.New(errcode.VideoNotFound)
-	}
-	_ = cache.SetJSON(ctx, s.rdb, key, video, cache.RandomizedTTL(5*time.Minute, 30*time.Second))
-	return video, nil
+	return result.(*entity.Video), nil
 }
 
 func (s *VideoService) ListByAuthorID(ctx context.Context, req *dto.VideoListByAuthorRequest) (*dto.VideoListResponse, error) {
