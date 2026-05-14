@@ -48,6 +48,7 @@ func (s *VideoService) Publish(ctx context.Context, authorID int64, req *dto.Vid
 	}
 	defer dst.Close()
 	if _, err = io.Copy(dst, file); err != nil {
+		os.Remove(savePath)
 		return nil, errcode.New(errcode.VideoUploadFail)
 	}
 
@@ -61,6 +62,7 @@ func (s *VideoService) Publish(ctx context.Context, authorID int64, req *dto.Vid
 		Status:   1,
 	}
 	if err := s.videoRepo.Create(ctx, v); err != nil {
+		os.Remove(savePath)
 		return nil, err
 	}
 	return v, nil

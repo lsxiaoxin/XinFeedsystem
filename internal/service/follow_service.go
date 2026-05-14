@@ -6,6 +6,7 @@ import (
 
 	"xinfeedsystem/internal/errcode"
 	"xinfeedsystem/internal/model/dto"
+	"xinfeedsystem/internal/model/entity"
 	"xinfeedsystem/internal/repository"
 )
 
@@ -37,42 +38,25 @@ func (s *FollowService) FollowAction(ctx context.Context, followerID, followeeID
 }
 
 func (s *FollowService) ListFollowing(ctx context.Context, req *dto.FollowListRequest) (*dto.FollowListResponse, error) {
-	limit := req.Limit
-	if limit <= 0 || limit > 50 {
-		limit = 10
-	}
-	users, last, err := s.followRepo.ListFollowing(ctx, req.UserID, req.CursorTime, req.CursorID, limit+1)
+	limit := normalizeLimit(req.Limit)
+	users, cursors, err := s.followRepo.ListFollowing(ctx, req.UserID, req.CursorTime, req.CursorID, limit+1)
 	if err != nil {
 		return nil, err
 	}
-	hasMore := len(users) > limit
-	if hasMore {
-		users = users[:limit]
-	}
-	vos := make([]*dto.UserVO, len(users))
-	for i, u := range users {
-		vos[i] = dto.ToUserVO(u)
-	}
-	resp := &dto.FollowListResponse{
-		Users:   vos,
-		HasMore: hasMore,
-	}
-	if hasMore {
-		resp.NextCursorTime = last[0]
-		resp.NextCursorID = last[1]
-	}
-	return resp, nil
+	return buildFollowResponse(users, cursors, limit), nil
 }
 
 func (s *FollowService) ListFollower(ctx context.Context, req *dto.FollowListRequest) (*dto.FollowListResponse, error) {
-	limit := req.Limit
-	if limit <= 0 || limit > 50 {
-		limit = 10
-	}
-	users, last, err := s.followRepo.ListFollower(ctx, req.UserID, req.CursorTime, req.CursorID, limit+1)
+	limit := normalizeLimit(req.Limit)
+	users, cursors, err := s.followRepo.ListFollower(ctx, req.UserID, req.CursorTime, req.CursorID, limit+1)
 	if err != nil {
 		return nil, err
 	}
+	return buildFollowResponse(users, cursors, limit), nil
+}
+
+// buildFollowResponse 截断到 limit 条，用 cursors[limit-1]（最后一条返回行）生成游标。
+func buildFollowResponse(users []*entity.User, cursors [][2]int64, limit int) *dto.FollowListResponse {
 	hasMore := len(users) > limit
 	if hasMore {
 		users = users[:limit]
@@ -81,13 +65,10 @@ func (s *FollowService) ListFollower(ctx context.Context, req *dto.FollowListReq
 	for i, u := range users {
 		vos[i] = dto.ToUserVO(u)
 	}
-	resp := &dto.FollowListResponse{
-		Users:   vos,
-		HasMore: hasMore,
+	resp := &dto.FollowListResponse{Users: vos, HasMore: hasMore}
+	if hasMore && limit <= len(cursors) {
+		resp.NextCursorTime = cursors[limit-1][0]
+		resp.NextCursorID = cursors[limit-1][1]
 	}
-	if hasMore {
-		resp.NextCursorTime = last[0]
-		resp.NextCursorID = last[1]
-	}
-	return resp, nil
+	return resp
 }

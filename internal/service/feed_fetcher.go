@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"xinfeedsystem/internal/errcode"
 	"xinfeedsystem/internal/model/entity"
 	"xinfeedsystem/internal/repository"
 )
@@ -67,7 +68,10 @@ func (f *FollowingFetcher) Type() string { return "following" }
 
 // Fetch 从 context 取登录用户 ID，查其关注的人发布的视频。
 func (f *FollowingFetcher) Fetch(ctx context.Context, score, cursorID int64, limit int) ([]*entity.Video, error) {
-	followerID, _ := ctx.Value(FeedUserIDKey).(int64)
+	followerID, ok := ctx.Value(FeedUserIDKey).(int64)
+	if !ok || followerID == 0 {
+		return nil, errcode.New(errcode.Unauthorized)
+	}
 	return f.videoRepo.ListByFollowing(ctx, followerID, score, cursorID, limit)
 }
 

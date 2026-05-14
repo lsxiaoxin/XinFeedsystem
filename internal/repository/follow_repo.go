@@ -83,17 +83,18 @@ func (r *FollowRepository) Unfollow(ctx context.Context, followerID, followeeID 
 }
 
 // ListFollowing 查询 followerID 关注了哪些人（JOIN users），游标分页。
-func (r *FollowRepository) ListFollowing(ctx context.Context, followerID, cursorTime, cursorID int64, limit int) ([]*entity.User, [2]int64, error) {
+func (r *FollowRepository) ListFollowing(ctx context.Context, followerID, cursorTime, cursorID int64, limit int) ([]*entity.User, [][2]int64, error) {
 	return r.listWithJoin(ctx, "f.follower_id = ?", "f.followee_id", followerID, cursorTime, cursorID, limit)
 }
 
 // ListFollower 查询谁关注了 followeeID（JOIN users），游标分页。
-func (r *FollowRepository) ListFollower(ctx context.Context, followeeID, cursorTime, cursorID int64, limit int) ([]*entity.User, [2]int64, error) {
+func (r *FollowRepository) ListFollower(ctx context.Context, followeeID, cursorTime, cursorID int64, limit int) ([]*entity.User, [][2]int64, error) {
 	return r.listWithJoin(ctx, "f.followee_id = ?", "f.follower_id", followeeID, cursorTime, cursorID, limit)
 }
 
-// listWithJoin 通用 follow 列表查询，返回 User 列表 + 最后一条的 [created_at, user_id]。
-func (r *FollowRepository) listWithJoin(ctx context.Context, whereClause, userIDCol string, id, cursorTime, cursorID int64, limit int) ([]*entity.User, [2]int64, error) {
+// listWithJoin 通用 follow 列表查询，返回 User 列表 + 每行对应的 [follow_time, user_id] 游标切片。
+// 调用方应取 cursors[limit-1] 作为下一页游标，而不是最后一个元素（最后一个是 hasMore 探针行）。
+func (r *FollowRepository) listWithJoin(ctx context.Context, whereClause, userIDCol string, id, cursorTime, cursorID int64, limit int) ([]*entity.User, [][2]int64, error) {
 	q := r.db.WithContext(ctx).
 		Table("follows f").
 		Select("u.*, f.created_at AS follow_time, "+userIDCol+" AS fuid").
@@ -107,7 +108,6 @@ func (r *FollowRepository) listWithJoin(ctx context.Context, whereClause, userID
 			cursorTime, cursorTime, cursorID)
 	}
 
-	// 用辅助结构体接收额外字段
 	type row struct {
 		entity.User
 		FollowTime int64 `gorm:"column:follow_time"`
@@ -115,19 +115,17 @@ func (r *FollowRepository) listWithJoin(ctx context.Context, whereClause, userID
 	}
 	var rows []row
 	if err := q.Scan(&rows).Error; err != nil {
-		return nil, [2]int64{}, err
+		return nil, nil, err
 	}
 
 	users := make([]*entity.User, len(rows))
-	var last [2]int64
+	cursors := make([][2]int64, len(rows))
 	for i, r := range rows {
 		u := r.User
 		users[i] = &u
-		if i == len(rows)-1 {
-			last = [2]int64{r.FollowTime, r.Fuid}
-		}
+		cursors[i] = [2]int64{r.FollowTime, r.Fuid}
 	}
-	return users, last, nil
+	return users, cursors, nil
 }
 
 var (

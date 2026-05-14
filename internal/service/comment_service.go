@@ -38,7 +38,10 @@ func (s *CommentService) Post(ctx context.Context, userID int64, req *dto.Commen
 		return nil, err
 	}
 
-	user, _ := s.userRepo.FindByID(ctx, userID)
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	var userVO *dto.UserVO
 	if user != nil {
 		userVO = dto.ToUserVO(user)
