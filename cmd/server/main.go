@@ -16,11 +16,14 @@ import (
 
 	"xinfeedsystem/config"
 	"xinfeedsystem/internal/api"
+	"xinfeedsystem/internal/consumer"
+	"xinfeedsystem/internal/event"
 	"xinfeedsystem/internal/model/entity"
 	"xinfeedsystem/internal/repository"
 	"xinfeedsystem/internal/router"
 	"xinfeedsystem/internal/service"
 	"xinfeedsystem/pkg/jwt"
+	"xinfeedsystem/pkg/kafkaclient"
 	"xinfeedsystem/pkg/logger"
 	"xinfeedsystem/pkg/redisclient"
 	"xinfeedsystem/pkg/snowflake"
@@ -57,7 +60,22 @@ func main() {
 	defer rdb.Close()
 	logger.Info("redis connected", zap.String("addr", fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port)))
 
-	// appCtx is cancelled on SIGINT/SIGTERM to stop background goroutines.
+	// Kafka writer（生产者）
+	kafkaWriter := kafkaclient.NewWriter(cfg.Kafka)
+	defer kafkaWriter.Close()
+
+	// 验证 broker 连通性（非阻塞，失败只打 warn 不退出——Kafka 可能比服务慢启动）
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), cfg.Kafka.DialTimeout)
+	if err := kafkaclient.Ping(pingCtx, cfg.Kafka.Brokers); err != nil {
+		logger.Warn("kafka ping failed, continuing without Kafka", zap.Error(err))
+	} else {
+		logger.Info("kafka writer ready", zap.Strings("brokers", cfg.Kafka.Brokers))
+	}
+	pingCancel()
+
+	producer := event.NewProducer(kafkaWriter, cfg.Kafka)
+
+	// appCtx 用于所有后台 goroutine 的生命周期管理
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
 
@@ -70,8 +88,8 @@ func main() {
 
 	userSvc    := service.NewUserService(userRepo, rdb)
 	videoSvc   := service.NewVideoService(videoRepo, cfg.Storage, rdb)
-	likeSvc    := service.NewLikeService(likeRepo, rdb)
-	commentSvc := service.NewCommentService(commentRepo, userRepo, rdb)
+	likeSvc    := service.NewLikeService(likeRepo, rdb, producer)
+	commentSvc := service.NewCommentService(commentRepo, userRepo, rdb, producer)
 	followSvc  := service.NewFollowService(followRepo, userRepo, rdb)
 
 	snapshotSvc := service.NewSnapshotService(videoRepo, rdb)
@@ -84,6 +102,16 @@ func main() {
 		service.NewSnapshotFetcher("popularity", rdb, videoRepo),
 		service.NewSnapshotFetcher("like_count", rdb, videoRepo),
 	)
+
+	// Kafka consumer（counter group）
+	kafkaReader := kafkaclient.NewReader(cfg.Kafka, []string{cfg.Kafka.LikeTopic, cfg.Kafka.CommentTopic})
+	counterConsumer := consumer.NewCounterConsumer(kafkaReader, videoRepo, rdb, cfg.Kafka)
+
+	consumerDone := make(chan struct{})
+	go func() {
+		counterConsumer.Start(appCtx)
+		close(consumerDone)
+	}()
 
 	tokenCache := repository.NewTokenCache(rdb)
 	storageBase := cfg.Storage.BaseDir
@@ -114,11 +142,23 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	appCancel() // stop background goroutines (snapshot service, etc.)
-	logger.Info("shutting down server...")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	logger.Info("shutting down: draining kafka consumer...")
+	appCancel() // 通知后台 goroutine 停止
+
+	// 等待 consumer 排空并 commit offset，最多 15s
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer drainCancel()
+	select {
+	case <-consumerDone:
+		logger.Info("kafka consumer drained")
+	case <-drainCtx.Done():
+		logger.Warn("kafka consumer drain timeout")
+	}
+
+	logger.Info("shutting down http server...")
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutCancel()
+	if err := srv.Shutdown(shutCtx); err != nil {
 		logger.Error("server shutdown error", zap.Error(err))
 	}
 	logger.Info("server exited")

@@ -47,3 +47,13 @@ redis:
   dial_timeout: 5s
   read_timeout: 3s
   write_timeout: 3s
+
+kafka:
+  brokers:
+    - "localhost:9092"
+  like_topic: "xfs.like.events"
+  comment_topic: "xfs.comment.events"
+  consumer_group: "xfs-counter-group"
+  batch_size: 100
+  batch_timeout: 100ms
+  dial_timeout: 5s

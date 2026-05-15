@@ -99,6 +99,35 @@ func (r *VideoRepository) FindByIDs(ctx context.Context, ids []int64) ([]*entity
 	return list, r.db.WithContext(ctx).Where("id IN ?", ids).Find(&list).Error
 }
 
+// CounterDelta 记录单个视频需要原子增加的各计数字段增量。
+type CounterDelta struct {
+	LikeDelta    int64
+	CommentDelta int64
+	HeatDelta    int64
+}
+
+// ApplyCounterDeltas 在单个事务内对每个视频执行一条原子 UPDATE，
+// 批量应用来自 Kafka consumer 聚合后的计数增量。
+func (r *VideoRepository) ApplyCounterDeltas(ctx context.Context, deltas map[int64]CounterDelta) error {
+	if len(deltas) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for videoID, d := range deltas {
+			updates := map[string]any{
+				"like_count":    gorm.Expr("GREATEST(0, like_count + ?)", d.LikeDelta),
+				"comment_count": gorm.Expr("GREATEST(0, comment_count + ?)", d.CommentDelta),
+				"heat":          gorm.Expr("GREATEST(0, heat + ?)", d.HeatDelta),
+			}
+			if err := tx.Model(&entity.Video{}).Where("id = ?", videoID).
+				Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // ListLatest 全站最新视频游标分页，供 LatestFeedFetcher 使用。
 func (r *VideoRepository) ListLatest(ctx context.Context, cursorTime, cursorID int64, limit int) ([]*entity.Video, error) {
 	q := r.db.WithContext(ctx).

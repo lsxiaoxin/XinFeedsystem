@@ -12,6 +12,7 @@ type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	MySQL     MySQLConfig     `mapstructure:"mysql"`
 	Redis     RedisConfig     `mapstructure:"redis"`
+	Kafka     KafkaConfig     `mapstructure:"kafka"`
 	JWT       JWTConfig       `mapstructure:"jwt"`
 	Snowflake SnowflakeConfig `mapstructure:"snowflake"`
 	Storage   StorageConfig   `mapstructure:"storage"`
@@ -82,6 +83,16 @@ type RedisConfig struct {
 	DialTimeout  time.Duration `mapstructure:"dial_timeout"`
 	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout time.Duration `mapstructure:"write_timeout"`
+}
+
+type KafkaConfig struct {
+	Brokers       []string      `mapstructure:"brokers"`
+	LikeTopic     string        `mapstructure:"like_topic"`
+	CommentTopic  string        `mapstructure:"comment_topic"`
+	ConsumerGroup string        `mapstructure:"consumer_group"`
+	BatchSize     int           `mapstructure:"batch_size"`
+	BatchTimeout  time.Duration `mapstructure:"batch_timeout"`
+	DialTimeout   time.Duration `mapstructure:"dial_timeout"`
 }
 
 // Load 从 path（文件夹或具体路径）加载配置；同时支持 XFS_ 前缀环境变量覆盖。

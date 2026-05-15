@@ -25,24 +25,17 @@ func (r *CommentRepository) FindByID(ctx context.Context, id int64) (*entity.Com
 	return &c, err
 }
 
-// Create 在事务内插入评论并更新视频评论数和热度。
+// Create 插入评论，仅写 comments 表，不修改计数字段。
+// 计数字段（comment_count / heat）由 Kafka consumer 异步更新。
+// 返回 delta=+1 供 service 层发 Kafka 事件。
 func (r *CommentRepository) Create(ctx context.Context, c *entity.Comment) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(c).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&entity.Video{}).Where("id = ?", c.VideoID).
-			UpdateColumn("comment_count", gorm.Expr("comment_count + 1")).Error; err != nil {
-			return err
-		}
-		return tx.Model(&entity.Video{}).Where("id = ?", c.VideoID).
-			UpdateColumn("heat", gorm.Expr("heat + 1")).Error
-	})
+	return r.db.WithContext(ctx).Create(c).Error
 }
 
-// Delete 软删除评论（仅限评论者本人），并更新视频评论数。
-func (r *CommentRepository) Delete(ctx context.Context, commentID, userID int64) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+// Delete 软删除评论（仅限评论者本人），不修改计数字段。
+// 返回被删评论的 videoID，供 service 层发 Kafka 事件；delta=-1。
+func (r *CommentRepository) Delete(ctx context.Context, commentID, userID int64) (videoID int64, err error) {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var c entity.Comment
 		if err := tx.First(&c, commentID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -53,16 +46,10 @@ func (r *CommentRepository) Delete(ctx context.Context, commentID, userID int64)
 		if c.UserID != userID {
 			return ErrCommentForbidden
 		}
-		if err := tx.Delete(&c).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&entity.Video{}).Where("id = ? AND comment_count > 0", c.VideoID).
-			UpdateColumn("comment_count", gorm.Expr("comment_count - 1")).Error; err != nil {
-			return err
-		}
-		return tx.Model(&entity.Video{}).Where("id = ? AND heat > 0", c.VideoID).
-			UpdateColumn("heat", gorm.Expr("heat - 1")).Error
+		videoID = c.VideoID
+		return tx.Delete(&c).Error
 	})
+	return videoID, err
 }
 
 // ListByVideoID 查询视频评论，游标分页，按时间倒序。

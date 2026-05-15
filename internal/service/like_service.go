@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-	"xinfeedsystem/internal/errcode"
+	"xinfeedsystem/internal/event"
 	"xinfeedsystem/internal/model/dto"
 	"xinfeedsystem/internal/repository"
 )
@@ -14,30 +15,31 @@ import (
 type LikeService struct {
 	likeRepo *repository.LikeRepository
 	rdb      *redis.Client
+	producer *event.Producer
 }
 
-func NewLikeService(likeRepo *repository.LikeRepository, rdb *redis.Client) *LikeService {
-	return &LikeService{likeRepo: likeRepo, rdb: rdb}
+func NewLikeService(likeRepo *repository.LikeRepository, rdb *redis.Client, producer *event.Producer) *LikeService {
+	return &LikeService{likeRepo: likeRepo, rdb: rdb, producer: producer}
 }
 
 func (s *LikeService) LikeAction(ctx context.Context, userID, videoID int64, actionType int) error {
-	var err error
-	if actionType == 1 {
-		err = s.likeRepo.Like(ctx, userID, videoID)
-	} else {
-		err = s.likeRepo.Unlike(ctx, userID, videoID)
-	}
-
-	if errors.Is(err, repository.ErrAlreadyLiked) {
-		return errcode.New(errcode.AlreadyLiked)
-	}
-	if errors.Is(err, repository.ErrNotLikedYet) {
-		return errcode.New(errcode.NotLikedYet)
-	}
+	delta, err := s.likeRepo.Toggle(ctx, userID, videoID, actionType)
 	if err != nil {
 		return err
 	}
+	if delta == 0 {
+		return nil // 状态未变，幂等返回
+	}
+
 	_ = s.rdb.Del(ctx, fmt.Sprintf("video:detail:%d", videoID))
+
+	s.producer.EmitLike(ctx, event.LikeEvent{
+		EventID: uuid.NewString(),
+		VideoID: videoID,
+		UserID:  userID,
+		Delta:   delta,
+		TS:      time.Now().UnixMilli(),
+	})
 	return nil
 }
 
@@ -66,3 +68,4 @@ func (s *LikeService) ListLikedVideos(ctx context.Context, userID int64, req *dt
 	}
 	return resp, nil
 }
+

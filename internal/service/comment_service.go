@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"xinfeedsystem/internal/errcode"
+	"xinfeedsystem/internal/event"
 	"xinfeedsystem/internal/model/dto"
 	"xinfeedsystem/internal/model/entity"
 	"xinfeedsystem/internal/repository"
@@ -17,10 +20,16 @@ type CommentService struct {
 	commentRepo *repository.CommentRepository
 	userRepo    *repository.UserRepository
 	rdb         *redis.Client
+	producer    *event.Producer
 }
 
-func NewCommentService(commentRepo *repository.CommentRepository, userRepo *repository.UserRepository, rdb *redis.Client) *CommentService {
-	return &CommentService{commentRepo: commentRepo, userRepo: userRepo, rdb: rdb}
+func NewCommentService(
+	commentRepo *repository.CommentRepository,
+	userRepo *repository.UserRepository,
+	rdb *redis.Client,
+	producer *event.Producer,
+) *CommentService {
+	return &CommentService{commentRepo: commentRepo, userRepo: userRepo, rdb: rdb, producer: producer}
 }
 
 func (s *CommentService) Post(ctx context.Context, userID int64, req *dto.CommentActionRequest) (*dto.CommentVO, error) {
@@ -40,7 +49,16 @@ func (s *CommentService) Post(ctx context.Context, userID int64, req *dto.Commen
 	if err := s.commentRepo.Create(ctx, c); err != nil {
 		return nil, err
 	}
+
 	_ = s.rdb.Del(ctx, fmt.Sprintf("video:detail:%d", req.VideoID))
+
+	s.producer.EmitComment(ctx, event.CommentEvent{
+		EventID: uuid.NewString(),
+		VideoID: req.VideoID,
+		UserID:  userID,
+		Delta:   +1,
+		TS:      time.Now().UnixMilli(),
+	})
 
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
@@ -57,16 +75,8 @@ func (s *CommentService) Delete(ctx context.Context, userID int64, req *dto.Comm
 	if req.CommentID == 0 {
 		return errcode.New(errcode.InvalidParam)
 	}
-	// 先查出 comment 的 video_id，删除后用于失效缓存
-	c, err := s.commentRepo.FindByID(ctx, req.CommentID)
-	if err != nil {
-		return err
-	}
-	if c == nil {
-		return errcode.New(errcode.CommentNotFound)
-	}
 
-	err = s.commentRepo.Delete(ctx, req.CommentID, userID)
+	videoID, err := s.commentRepo.Delete(ctx, req.CommentID, userID)
 	if errors.Is(err, repository.ErrCommentNotFound) {
 		return errcode.New(errcode.CommentNotFound)
 	}
@@ -76,7 +86,16 @@ func (s *CommentService) Delete(ctx context.Context, userID int64, req *dto.Comm
 	if err != nil {
 		return err
 	}
-	_ = s.rdb.Del(ctx, fmt.Sprintf("video:detail:%d", c.VideoID))
+
+	_ = s.rdb.Del(ctx, fmt.Sprintf("video:detail:%d", videoID))
+
+	s.producer.EmitComment(ctx, event.CommentEvent{
+		EventID: uuid.NewString(),
+		VideoID: videoID,
+		UserID:  userID,
+		Delta:   -1,
+		TS:      time.Now().UnixMilli(),
+	})
 	return nil
 }
 
@@ -92,7 +111,6 @@ func (s *CommentService) List(ctx context.Context, req *dto.CommentListRequest) 
 		comments = comments[:limit]
 	}
 
-	// 批量取用户信息，避免 N+1
 	userIDs := make([]int64, 0, len(comments))
 	for _, c := range comments {
 		userIDs = append(userIDs, c.UserID)

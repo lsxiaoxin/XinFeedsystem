@@ -311,4 +311,99 @@ Repository 层定义 sentinel error → Service 层用 `errors.Is` 转换为 `Se
 |---|---|---|
 | 阶段一 | 纯 MySQL，跑通所有业务接口（18 个 API，5 张表） | **已完成** |
 | 阶段二 | Redis Cache-Aside、分布式锁防击穿、ZSet 热榜快照、Token 双写 | **已完成** |
-| 阶段三 | Kafka 异步点赞落库、视频发布写扩散、推拉结合关注流 | 待实现 |
+| 阶段三 | Kafka 异步点赞/评论计数（削峰 + 幂等消费） | **已完成** |
+
+---
+
+## Kafka 架构设计（阶段三）
+
+### 核心思路：计数写路径异步化
+
+```
+点赞/取消点赞 API                         评论/删评论 API
+        │                                        │
+        ▼                                        ▼
+likeRepo.Toggle()                     commentRepo.Create/Delete()
+（仅写 video_likes，不改计数）          （仅写 comments，不改计数）
+        │                                        │
+        ▼                                        ▼
+event.Producer.EmitLike()             event.Producer.EmitComment()
+        │                                        │
+        └──────────────┬─────────────────────────┘
+                       ▼
+              Kafka Broker (KRaft)
+         ┌─────────────┬────────────────┐
+         │             │                │
+   xfs.like.events  xfs.comment.events
+   (3 partitions,   (3 partitions,
+    key=video_id)    key=video_id)
+         └─────────────┴────────────────┘
+                       │
+                       ▼
+            CounterConsumer goroutine
+                       │
+        ┌──────────────┴──────────────┐
+        │  collectBatch (100ms/100条)  │
+        │  → dedupe (Redis SET NX)     │
+        │  → aggregateBatch (纯函数)   │
+        │  → ApplyCounterDeltas (DB)   │
+        │  → invalidate video cache    │
+        │  → CommitMessages (offset)   │
+        └─────────────────────────────┘
+```
+
+### 生产者设计
+
+| 配置项 | 值 | 原因 |
+|---|---|---|
+| `RequiredAcks` | `RequireAll` | 保证消息持久化，不丢点赞事件 |
+| `Balancer` | `Hash{key=video_id}` | 同一 video 的事件落同一分区 → 保序 |
+| 超时 | 500ms | 防止 Kafka 卡住拖垮 API |
+| 失败策略 | 仅记日志 | 主记录已落 DB，不阻断响应；可用补偿脚本修复 |
+
+### 消费者设计（批量聚合）
+
+```
+100 个点赞请求 → Kafka → consumer 聚合 → 1 条 UPDATE
+                                         (GREATEST(0, like_count + 100))
+```
+
+| 配置项 | 值 | 原因 |
+|---|---|---|
+| `BatchSize` | 100 | 每批最多聚合 100 条事件 |
+| `BatchTimeout` | 100ms | 聚合窗口；延迟 < 100ms 认为可接受 |
+| `CommitInterval` | 0（手动）| DB 成功后才 commit offset，避免丢数据 |
+| `ConsumerGroup` | `xfs-counter-group` | 自动管理 offset，支持多实例扩容 |
+
+### 幂等消费（at-least-once → exactly-once 等价）
+
+```
+consumer 收到事件
+        │
+        ▼
+Redis SET NX "processed:event:{event_id}" 1 EX 3600
+        ├─ 成功（新事件）→ 正常处理
+        └─ 失败（重复）  → 跳过，记日志 "duplicate event skipped"
+```
+
+- Consumer 重启/重平衡后会重投已 fetch 但未 commit 的消息
+- `SET NX` + 1h TTL 保证在此窗口内重复投递不会导致双写
+- 1h 远超 Kafka 在异常下的重投窗口
+
+### 优雅关停时序
+
+```
+SIGINT / SIGTERM
+        │
+        ▼
+appCancel()           ← 通知所有 goroutine 停止
+        │
+        ▼
+<-consumerDone        ← 等 consumer 排空缓冲区 + commit offset（最多 15s）
+        │
+        ▼
+http.Server.Shutdown  ← 等待飞行中请求（最多 10s）
+        │
+        ▼
+kafkaWriter.Close()   ← 刷新生产者缓冲区
+```
