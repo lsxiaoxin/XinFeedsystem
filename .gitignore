@@ -27,3 +27,8 @@ vendor/
 # Swagger 生成文件（可从代码重新生成）
 docs/swagger.*
 docs/docs.go
+
+# 个人笔记 / 计划文档（不属于代码仓库）
+亮点.md
+PLAN.md
+PLAN2.md
